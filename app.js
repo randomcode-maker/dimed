@@ -308,6 +308,7 @@
     const scorer = scoringSide(ev);
     if (scorer) ev.rot = applyPoint(scorer);
     S.events.push(ev);
+    if (p) S.selId = null;   // a pick lasts one play, so the next action can be tapped first
     clearWait();
     if (!ev.land && p && S.trackHits && LAND_KEYS[key]) startWait(ev.id);
     save();
@@ -512,37 +513,36 @@
     if (el) el.outerHTML = hitCardHtml();
   }
 
-  // Live zone picker: a simple volleyball court, their side split into the six standard zones.
+  // Live zone picker: their half of the court seen from our bench (net at the bottom), split into
+  // the six standard zones as big buttons, with an Out strip past their baseline.
+  const ZC = { W: 300, H: 336, X: 20, Y: 44, S: 260 };
   function zoneCourtSvg(counts) {
-    const X = CRT.X, Y = CRT.Y, L = CRT.L, B = CRT.B, mid = X + L / 2, a = L / 6;
+    const X = ZC.X, Y = ZC.Y, S3 = ZC.S / 3, net = Y + ZC.S, att = net - S3;
     const sel = U.land && U.land.z !== undefined ? U.land.z : null;
     const cells = ZONE_CELLS.map((c) => {
-      const x = c.front ? mid : mid + a, w = c.front ? a : L / 2 - a;
-      const y = Y + c.row * B / 3, h = B / 3, cx = x + w / 2, cy = y + h / 2;
+      const x = X + c.row * S3, y = c.front ? att : Y, w = S3, h = c.front ? S3 : ZC.S - S3;
+      const cx = x + w / 2, cy = y + h / 2;
       const n = counts[c.z] || 0;
       return '<g class="zbtn' + (sel === c.z ? ' on' : '') + '" data-a="hitZone" data-z="' + c.z + '" role="button" tabindex="0" aria-label="Zone ' + c.z + '">' +
-        '<rect class="zb-hit" x="' + (x + 2) + '" y="' + (y + 2) + '" width="' + (w - 4) + '" height="' + (h - 4) + '" rx="5"/>' +
-        '<circle class="zb-badge" cx="' + cx + '" cy="' + cy + '" r="15"/>' +
+        '<rect class="zb-hit" x="' + (x + 4) + '" y="' + (y + 4) + '" width="' + (w - 8) + '" height="' + (h - 8) + '" rx="8"/>' +
+        '<circle class="zb-badge" cx="' + cx + '" cy="' + cy + '" r="21"/>' +
         '<text class="zb-num" x="' + cx + '" y="' + cy + '">' + c.z + '</text>' +
-        (n ? '<text class="zb-cnt" x="' + (x + w - 7) + '" y="' + (y + 13) + '">' + n + '</text>' : '') + '</g>';
+        (n ? '<text class="zb-cnt" x="' + (x + w - 10) + '" y="' + (y + 18) + '">' + n + '</text>' : '') + '</g>';
     }).join('');
     const outN = counts[0] || 0;
-    return '<svg class="courtsvg zcourt" viewBox="0 0 ' + CRT.W + ' ' + CRT.H + '" role="group" aria-label="Court. Tap the zone where the ball landed.">' +
-      '<rect class="vc-free" width="' + CRT.W + '" height="' + CRT.H + '"/>' +
-      '<rect class="vc-floor" x="' + X + '" y="' + Y + '" width="' + L + '" height="' + B + '"/>' +
-      '<rect class="vc-ours" x="' + X + '" y="' + Y + '" width="' + L / 2 + '" height="' + B + '"/>' +
-      '<path class="vc-div" d="M' + (mid + a) + ' ' + Y + 'H' + (X + L) + 'M' + mid + ' ' + (Y + B / 3) + 'H' + (X + L) + 'M' + mid + ' ' + (Y + 2 * B / 3) + 'H' + (X + L) + '"/>' +
-      '<rect class="vc-line" x="' + X + '" y="' + Y + '" width="' + L + '" height="' + B + '"/>' +
-      '<path class="vc-line" d="M' + (mid - a) + ' ' + Y + 'V' + (Y + B) + 'M' + (mid + a) + ' ' + Y + 'V' + (Y + B) + '"/>' +
-      '<text class="vc-lbl" x="' + (X + (L / 2 - a) / 2) + '" y="' + (Y + B / 2) + '">OUR SIDE</text>' +
-      '<text class="vc-top" x="' + (X + 2) + '" y="20">' + esc(S.team.toUpperCase()) + '</text>' +
-      '<text class="vc-top end" x="' + (X + L - 2) + '" y="20">' + esc(S.opp.toUpperCase()) + '</text>' +
-      cells +
+    return '<svg class="courtsvg zcourt" viewBox="0 0 ' + ZC.W + ' ' + ZC.H + '" role="group" aria-label="Their court. Tap the zone where the ball landed.">' +
+      '<rect class="vc-free" width="' + ZC.W + '" height="' + ZC.H + '"/>' +
       '<g class="zbtn out' + (sel === 0 ? ' on' : '') + '" data-a="hitZone" data-z="0" role="button" tabindex="0" aria-label="Out">' +
-        '<rect class="zb-out" x="' + (X + L + 5) + '" y="' + Y + '" width="' + (CRT.W - X - L - 9) + '" height="' + B + '" rx="6"/>' +
-        '<text class="zb-outlbl" transform="translate(' + (X + L + 5 + (CRT.W - X - L - 9) / 2) + ' ' + (Y + B / 2) + ') rotate(90)">OUT' + (outN ? ' · ' + outN : '') + '</text></g>' +
-      '<rect class="vc-net" x="' + (mid - 2.5) + '" y="' + (Y - 9) + '" width="5" height="' + (B + 18) + '" rx="2"/>' +
-      '<circle class="vc-post" cx="' + mid + '" cy="' + (Y - 12) + '" r="4.5"/><circle class="vc-post" cx="' + mid + '" cy="' + (Y + B + 12) + '" r="4.5"/>' +
+        '<rect class="zb-out" x="' + X + '" y="6" width="' + ZC.S + '" height="' + (Y - 14) + '" rx="8"/>' +
+        '<text class="zb-outlbl" x="' + (X + ZC.S / 2) + '" y="' + (6 + (Y - 14) / 2) + '">OUT' + (outN ? ' · ' + outN : '') + '</text></g>' +
+      '<rect class="vc-floor" x="' + X + '" y="' + Y + '" width="' + ZC.S + '" height="' + ZC.S + '"/>' +
+      '<path class="vc-div" d="M' + (X + S3) + ' ' + Y + 'V' + net + 'M' + (X + 2 * S3) + ' ' + Y + 'V' + net + '"/>' +
+      '<rect class="vc-line" x="' + X + '" y="' + Y + '" width="' + ZC.S + '" height="' + ZC.S + '"/>' +
+      '<path class="vc-line" d="M' + X + ' ' + att + 'H' + (X + ZC.S) + '"/>' +
+      cells +
+      '<rect class="vc-net" x="' + (X - 12) + '" y="' + (net - 3) + '" width="' + (ZC.S + 24) + '" height="6" rx="3"/>' +
+      '<circle class="vc-post" cx="' + (X - 12) + '" cy="' + net + '" r="5"/><circle class="vc-post" cx="' + (X + ZC.S + 12) + '" cy="' + net + '" r="5"/>' +
+      '<text class="vc-lbl" x="' + (ZC.W / 2) + '" y="' + (net + 18) + '">NET</text>' +
       '</svg>';
   }
 
