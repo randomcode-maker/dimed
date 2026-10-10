@@ -35,10 +35,12 @@
   // score: which side gets the point when a player on OUR team records it.
   // q: whether the action is rated for quality (1-4).
   const STATS = {
-    kill:      { label: 'Kill',             short: 'K',   score: 'us',   q: true, g: 'pts' },
-    ace:       { label: 'Ace',              short: 'Ace', score: 'us',   q: true, g: 'pts' },
-    block:     { label: 'Block kill',       short: 'BK',  score: 'us',   q: true, g: 'pts' },
-    transKill: { label: 'Transition kill',  short: 'TK',  score: 'us',   q: true, g: 'pts' },
+    // Plays that win a point aren't rated: the point says how good they were.
+    kill:      { label: 'Kill',             short: 'K',   score: 'us',   g: 'pts' },
+    ace:       { label: 'Ace',              short: 'Ace', score: 'us',   g: 'pts' },
+    block:     { label: 'Block kill',       short: 'BK',  score: 'us',   g: 'pts' },
+    // No longer a button: Kill covers it. Kept so older saved transition kills still read and count as kills.
+    transKill: { label: 'Transition kill',  short: 'TK',  score: 'us',   g: 'pts' },
     attackErr: { label: 'Attack error',     short: 'AE',  score: 'them', g: 'err' },
     serveErr:  { label: 'Serve error',      short: 'SE',  score: 'them', g: 'err' },
     recErr:    { label: 'Reception error',  short: 'RE',  score: 'them', g: 'err' },
@@ -57,7 +59,7 @@
   };
   const STAT_KEYS = Object.keys(STATS);
   const GROUPS = [
-    { id: 'pts',   title: 'Points earned', keys: ['kill', 'ace', 'block', 'transKill'] },
+    { id: 'pts',   title: 'Points earned', keys: ['kill', 'ace', 'block'] },
     { id: 'err',   title: 'Errors',        keys: ['attackErr', 'serveErr', 'recErr', 'netErr'] },
     { id: 'skill', title: 'Skills',        keys: ['attack', 'serve', 'dig', 'assist', 'set', 'recPass', 'blockAss'] },
     { id: 'trans', title: 'Transition',    keys: ['transHit', 'transDig', 'transBlock', 'transSet'] }
@@ -223,7 +225,7 @@
       if (setFilter !== 'all' && e.set !== Number(setFilter)) continue;
       const r = m[e.pid];
       if (!r || !(e.key in r)) continue;
-      r[e.key]++;
+      r[e.key === 'transKill' ? 'kill' : e.key]++;
       if (e.q) { r.qs += e.q; r.qn++; }
     }
     return m;
@@ -231,7 +233,11 @@
 
   function oppCounts() {
     const c = {};
-    for (const e of S.events) if (e.pid === 'opp' && e.set === S.set) c[e.key] = (c[e.key] || 0) + 1;
+    for (const e of S.events) {
+      if (e.pid !== 'opp' || e.set !== S.set) continue;
+      const k = e.key === 'transKill' ? 'kill' : e.key;
+      c[k] = (c[k] || 0) + 1;
+    }
     return c;
   }
 
@@ -241,21 +247,20 @@
     return t;
   }
 
-  const pts = (r) => r.kill + r.ace + r.block + r.transKill;
+  const pts = (r) => r.kill + r.ace + r.block;
   const errs = (r) => r.attackErr + r.serveErr + r.recErr + r.netErr;
-  // Transition kills and hits count as kills and attack attempts, like any other swing.
-  const kills = (r) => r.kill + r.transKill;
-  const att = (r) => kills(r) + r.attack + r.transHit + r.attackErr;
+  // Transition hits count as attack attempts like any other swing (compute() already folds old transition kills into kills).
+  const att = (r) => r.kill + r.attack + r.transHit + r.attackErr;
   const srv = (r) => r.serve + r.ace + r.serveErr;
 
   // Column definitions shared by the on-screen table and the Excel export.
   const COLS = [
-    { h: 'Pts',  t: 'Points scored: kills + aces + block kills + transition kills', g: 'pts', f: pts },
-    { h: 'K',    t: 'Kills, including transition kills', g: 'pts', f: kills },
+    { h: 'Pts',  t: 'Points scored: kills + aces + block kills', g: 'pts', f: pts },
+    { h: 'K',    t: 'Kills', g: 'pts', f: (r) => r.kill },
     { h: 'Ace',  t: 'Service aces', g: 'pts', f: (r) => r.ace },
     { h: 'BK',   t: 'Block kills', g: 'pts', f: (r) => r.block },
     { h: 'Att',  t: 'Attack attempts: kills + other attacks + transition hits + attack errors', g: 'skill', f: att },
-    { h: 'Hit%', t: 'Hitting percentage: (kills - attack errors) / attempts', g: 'skill', fmt: 'dec3', f: (r) => (att(r) ? (kills(r) - r.attackErr) / att(r) : null) },
+    { h: 'Hit%', t: 'Hitting percentage: (kills - attack errors) / attempts', g: 'skill', fmt: 'dec3', f: (r) => (att(r) ? (r.kill - r.attackErr) / att(r) : null) },
     { h: 'Srv',  t: 'Total serves: serves in + aces + serve errors', g: 'skill', f: srv },
     { h: 'Srv%', t: 'Serve in %: (serves in + aces) / total serves', g: 'skill', fmt: 'dec3', f: (r) => (srv(r) ? (r.serve + r.ace) / srv(r) : null) },
     { h: 'BA',   t: 'Block assists (credit only, no point)', g: 'skill', f: (r) => r.blockAss },
@@ -854,7 +859,7 @@
       (S.players.length
         ? '<div class="table-wrap"><table class="st"><thead>' + head + '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></div>'
         : '<div class="card empty">Add players and log some plays to see stats here.</div>') +
-      '<p class="legend">Hold or hover a column heading for its meaning. K and Att include transition kills and hits. Hit% = (kills − attack errors) ÷ attempts. Their player is never included in these tables or the export. Excel export has Totals, one sheet per set, Scores, a Landings sheet, and a full Play log.</p>';
+      '<p class="legend">Hold or hover a column heading for its meaning. Att includes transition hits. Hit% = (kills − attack errors) ÷ attempts. Their player is never included in these tables or the export. Excel export has Totals, one sheet per set, Scores, a Landings sheet, and a full Play log.</p>';
   }
 
   /* ---- hit map ---- */
