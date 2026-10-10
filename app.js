@@ -133,7 +133,7 @@
     players: [], events: [], set: 1, adj: {},
     rotation: [null, null, null, null, null, null],
     serving: 'us', autoRotate: true, askQuality: true, trackHits: true,
-    autoSet: true, bestOf: 5, matchOver: null,
+    autoSet: true, bestOf: 5, matchOver: null, showInsights: true,
     subs: [], starts: {}, lastLineup: null,
     tab: 'game', selId: null
   });
@@ -669,6 +669,129 @@
       '<div class="hit-status">' + status + btn + '</div></section>';
   }
 
+  /* ---- live insights: who to set, top hitters, shot placement ----
+   * Worked out on the device from this match's logged swings, so it needs no network. */
+  const SWING = { kill: 'k', transKill: 'k', attack: 'p', transHit: 'p', attackErr: 'e' };   // k = kill, p = in play, e = error
+  const MIN_SWINGS = 4;    // swings before a hitter's numbers are trusted
+  const RECENT = 6;        // swings that count as "recent form"
+  const fmt3 = (v) => fmtCell({ fmt: 'dec3' }, v);
+  const firstName = (p) => p.name.trim().split(/\s+/)[0];
+  const effOf = (list) => list.reduce((s, r) => s + (r === 'k' ? 1 : r === 'e' ? -1 : 0), 0);
+
+  function hitterRows(swings) {
+    const by = {};
+    swings.forEach((e) => {
+      const r = by[e.pid] || (by[e.pid] = { p: player(e.pid), res: [], n: 0, k: 0, e: 0 });
+      const x = SWING[e.key];
+      r.res.push(x); r.n++;
+      if (x === 'k') r.k++; else if (x === 'e') r.e++;
+    });
+    return Object.keys(by).map((id) => by[id]);
+  }
+
+  // Set score: Hit% for the match and for the last few swings, each pulled toward the team's Hit%
+  // so a hot 2-for-2 start doesn't outrank a steady 6-for-10. Recent form gets 40% of the weight.
+  function setScore(r, teamEff) {
+    const shrink = (list) => (effOf(list) + 3 * teamEff) / (list.length + 3);
+    return 0.6 * shrink(r.res) + 0.4 * shrink(r.res.slice(-RECENT));
+  }
+
+  function insightsHtml() {
+    const swings = S.events.filter((e) => SWING[e.key] && player(e.pid));
+    const head = '<div class="ins-head"><span class="hit-title">Insights</span>' +
+      '<span class="live-chip"><i></i>' + swings.length + ' swing' + (swings.length === 1 ? '' : 's') + '</span></div>';
+    if (!swings.length) {
+      return '<section class="ins" id="insights">' + head +
+        '<p class="ins-empty">Log kills, attacks and attack errors and tips on who to set and where to hit show up here.</p></section>';
+    }
+    const rows = hitterRows(swings);
+    const teamEff = effOf(rows.reduce((a, r) => a.concat(r.res), [])) / swings.length;
+
+    // Who to set: hitters on the court now (any hitter if the court is empty), liberos left out.
+    const court = onCourtIds();
+    const pool = rows.filter((r) => r.p.pos !== 'L' && (!court.length || court.indexOf(r.p.id) >= 0));
+    const ready = pool.filter((r) => r.n >= MIN_SWINGS).sort((a, b) => setScore(b, teamEff) - setScore(a, teamEff));
+    let setHtml;
+    if (ready.length) {
+      const top = ready[0], last = top.res.slice(-4), lastK = last.filter((x) => x === 'k').length;
+      const why = fmt3((top.k - top.e) / top.n) + ' hitting · ' + top.k + ' K on ' + top.n + ' swings' +
+        (last.length >= 3 && lastK >= 2 ? ' · ' + lastK + ' kills in last ' + last.length : '');
+      const next = ready[1] ? '<span class="ins-then">then ' + esc(firstName(ready[1].p)) + ' (' + fmt3((ready[1].k - ready[1].e) / ready[1].n) + ')</span>' : '';
+      setHtml = '<div class="ins-set"><span class="avatar" style="background:' + avatarColor(top.p) + '">' + esc(initials(top.p.name)) + '</span>' +
+        '<div class="ins-set-txt"><b>Set ' + esc(playerLabel(top.p)) + '</b><small>' + why + '</small>' + next + '</div></div>';
+    } else {
+      setHtml = '<p class="ins-note">Too early to call. Each hitter needs ' + MIN_SWINGS + ' swings first.</p>';
+    }
+    // A hitter on the court who just made 2 errors in their last 3 swings.
+    const cold = pool.filter((r) => r.res.slice(-3).filter((x) => x === 'e').length >= 2);
+    const coldHtml = cold.map((r) => '<p class="ins-warn">Ease off ' + esc(firstName(r.p)) + ': ' +
+      r.res.slice(-3).filter((x) => x === 'e').length + ' errors in the last 3 swings.</p>').join('');
+
+    // Top hitters across the match: kills per swing, then Hit%.
+    const ranked = rows.filter((r) => r.n >= MIN_SWINGS).sort((a, b) => b.k / b.n - a.k / a.n || (b.k - b.e) / b.n - (a.k - a.e) / a.n);
+    const best = ranked.length ? ranked[0].k / ranked[0].n : 1;
+    const topHtml = ranked.slice(0, 3).map((r) =>
+      '<div class="ins-row"><span class="ins-name">' + esc(firstName(r.p)) + '</span>' +
+      '<span class="ins-bar"><i style="width:' + Math.round(100 * (r.k / r.n) / (best || 1)) + '%"></i></span>' +
+      '<span class="ins-num">' + Math.round(100 * r.k / r.n) + '%</span>' +
+      '<span class="ins-sub">' + r.k + '/' + r.n + ' · ' + fmt3((r.k - r.e) / r.n) + '</span></div>').join('');
+    const fewer = rows.length - ranked.length;
+    const topNote = ranked.length
+      ? (fewer ? '<p class="ins-foot">' + fewer + ' more with under ' + MIN_SWINGS + ' swings</p>' : '')
+      : '<p class="ins-note">Nobody has ' + MIN_SWINGS + ' swings yet.</p>';
+
+    return '<section class="ins" id="insights">' + head +
+      '<div class="ins-sec"><div class="ins-lbl">Who to set</div>' + setHtml + coldHtml + '</div>' +
+      '<div class="ins-sec"><div class="ins-lbl">Top hitters <span>kill rate · K/swings · Hit%</span></div>' + topHtml + topNote + '</div>' +
+      '<div class="ins-sec"><div class="ins-lbl">Shot placement</div>' + placementHtml(swings, ready[0]) + '</div></section>';
+  }
+
+  // Where our swings land on their side: kills, balls they dug, and errors, per zone (0 = out).
+  function placementHtml(swings, top) {
+    const z = {};
+    for (let i = 0; i <= 6; i++) z[i] = { k: 0, p: 0, e: 0 };
+    let n = 0;
+    swings.forEach((e) => {
+      if (!e.land) return;
+      const zz = zoneOf(e.land);
+      if (zz.side === 'our') return;
+      z[zz.z][SWING[e.key]]++; n++;
+    });
+    if (!n) return '<p class="ins-note">Tap a zone after each swing to get placement tips.</p>';
+    const cell = (c) => {
+      const d = z[c.z], tot = d.k + d.p + d.e;
+      return '<div class="mz' + (c.front ? ' front' : '') + '" style="--k:' + (tot ? (d.k / tot).toFixed(2) : 0) + '"><span class="mz-n">' + c.z + '</span>' +
+        (d.k ? '<b>' + d.k + ' K</b>' : '') + (d.e ? '<em>' + d.e + ' E</em>' : '') + (!d.k && d.p ? '<i>' + d.p + ' dug</i>' : '') + '</div>';
+    };
+    const back = ZONE_CELLS.filter((c) => !c.front), front = ZONE_CELLS.filter((c) => c.front);
+    const grid = '<div class="mini-court"><div class="mz-out">Out' + (z[0].e || z[0].k || z[0].p ? ' · ' + (z[0].e + z[0].k + z[0].p) : '') + '</div>' +
+      '<div class="mz-grid">' + back.map(cell).join('') + front.map(cell).join('') + '</div><div class="mz-net">Net</div></div>';
+
+    const tips = [];
+    const zs = [1, 2, 3, 4, 5, 6];
+    const hot = zs.filter((i) => z[i].k >= 2).sort((a, b) => z[b].k - z[a].k || z[b].k / (z[b].k + z[b].p + z[b].e) - z[a].k / (z[a].k + z[a].p + z[a].e));
+    if (hot.length) {
+      const h = hot[0], t = z[h].k + z[h].p + z[h].e;
+      tips.push('<p class="ins-tip good">Keep hitting <b>zone ' + h + '</b>: ' + z[h].k + ' kills on ' + t + ' swings there.</p>');
+    }
+    const dug = zs.filter((i) => z[i].p >= 2 && z[i].k === 0).sort((a, b) => z[b].p - z[a].p);
+    if (dug.length) tips.push('<p class="ins-tip">They dig <b>zone ' + dug[0] + '</b>: ' + z[dug[0]].p + ' swings, no kills. Try another spot.</p>');
+    const errs = zs.concat([0]).reduce((s, i) => s + z[i].e, 0);
+    if (errs >= 2) {
+      tips.push(z[0].e * 2 > errs
+        ? '<p class="ins-tip bad">' + z[0].e + ' of ' + errs + ' attack errors went <b>out</b>. Aim inside the lines.</p>'
+        : '<p class="ins-tip bad">' + errs + ' attack errors, ' + z[0].e + ' out.</p>');
+    }
+    if (top) {
+      const mine = {};
+      swings.forEach((e) => { if (e.pid === top.p.id && SWING[e.key] === 'k' && e.land) { const zz = zoneOf(e.land); if (zz.side === 'their') mine[zz.z] = (mine[zz.z] || 0) + 1; } });
+      const fav = Object.keys(mine).sort((a, b) => mine[b] - mine[a])[0];
+      if (fav && mine[fav] >= 2) tips.push('<p class="ins-tip">' + esc(firstName(top.p)) + '’s kills land most in <b>zone ' + fav + '</b> (' + mine[fav] + ').</p>');
+    }
+    if (!tips.length) tips.push('<p class="ins-note">Not enough landings yet for a tip.</p>');
+    return '<div class="ins-place">' + grid + '<div class="ins-tips">' + tips.join('') + '</div></div>';
+  }
+
   /* ---- game view ---- */
   function emptyRoster() {
     return '<div class="card" style="text-align:center;padding:32px 16px">' +
@@ -783,6 +906,7 @@
         '<button class="chip-btn dark" data-a="undo">' + ic('undo') + ' Undo</button></div></div>' +
       (S.trackHits ? '<div class="g-hit">' + hitCardHtml() + '</div>' : '') +
       '<div class="g-controls controls">' + groups +
+        (S.showInsights ? insightsHtml() : '') +
         '<section class="feed"><div class="col-title" style="padding:12px 14px 0"><span>Recent plays</span></div>' +
         (recent || '<div class="empty">Plays you log will show up here.</div>') + '</section>' +
       '</div></div>';
@@ -940,6 +1064,7 @@
       '<div class="card"><h2>Tracking</h2>' +
       toggleRow('askQuality', 'Rate every play', 'Pop up a 1–4 quality rating after each skill action.') +
       toggleRow('trackHits', 'Track where hits land', 'Show the court on the Game screen and save the landing spot with each hit or serve.') +
+      toggleRow('showInsights', 'Game insights', 'Show tips on the Game screen: who to set, top hitters and where kills land.') +
       toggleRow('autoRotate', 'Auto-rotate on side-out', 'Rotate the court when we win a point while the other team served.') +
       '</div>' +
       '<div class="card"><h2>Match</h2>' +

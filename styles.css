@@ -282,6 +282,46 @@ svg.ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-wid
 .badge.zn { background: rgba(56, 189, 248, 0.14); color: #7DD3FC; }
 .empty { padding: 22px 14px; text-align: center; color: var(--ink-3); font-size: 14px; font-weight: 600; }
 
+/* ---------- live insights ---------- */
+.ins { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+.ins-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.ins-sec { border-top: 1px solid var(--line); padding: 10px 0 4px; margin-top: 8px; }
+.ins-sec:first-of-type { border-top: 0; margin-top: 0; }
+.ins-lbl { font-size: 11px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.ins-lbl span { letter-spacing: 0.02em; text-transform: none; font-weight: 700; }
+.ins-set { display: flex; align-items: center; gap: 12px; background: rgba(34, 197, 94, 0.09); border: 1px solid rgba(34, 197, 94, 0.45); border-radius: 12px; padding: 10px 12px; }
+.ins-set .avatar { flex: none; }
+.ins-set-txt { min-width: 0; }
+.ins-set-txt b { display: block; font-size: 17px; color: var(--green-2); }
+.ins-set-txt small { display: block; font-size: 13px; color: var(--ink-2); font-weight: 600; margin-top: 2px; }
+.ins-then { display: block; font-size: 12px; color: var(--ink-3); font-weight: 700; margin-top: 2px; }
+.ins-note, .ins-empty, .ins-foot { margin: 0; font-size: 13px; color: var(--ink-3); font-weight: 600; line-height: 1.4; }
+.ins-foot { font-size: 12px; margin-top: 4px; }
+.ins-warn { margin: 8px 0 0; font-size: 13px; font-weight: 700; color: #FBBF24; }
+.ins-row { display: grid; grid-template-columns: 74px minmax(0, 1fr) 40px auto; align-items: center; gap: 8px; padding: 3px 0; font-size: 14px; }
+.ins-name { font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ins-bar { height: 8px; background: rgba(255, 255, 255, 0.06); border-radius: 999px; overflow: hidden; }
+.ins-bar i { display: block; height: 100%; background: var(--green); border-radius: 999px; }
+.ins-num { font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
+.ins-sub { font-size: 12px; color: var(--ink-3); font-weight: 700; font-variant-numeric: tabular-nums; min-width: 72px; text-align: right; }
+.ins-place { display: flex; gap: 12px; align-items: flex-start; }
+.mini-court { flex: none; width: 132px; font-size: 10px; font-weight: 800; text-align: center; color: var(--ink-3); letter-spacing: 0.1em; text-transform: uppercase; }
+.mz-out { border: 1px dashed var(--line-2); border-radius: 6px; padding: 3px 0; margin-bottom: 4px; }
+.mz-grid { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 52px 30px; border: 1.5px solid rgba(226, 232, 240, 0.6); background: #0E1626; }
+.mz { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; border: 1px solid var(--line);
+  background: rgba(34, 197, 94, calc(var(--k) * 0.5)); text-transform: none; letter-spacing: 0; }
+.mz-n { position: absolute; top: 2px; left: 4px; font-size: 9px; color: var(--ink-3); }
+.mz b { font-size: 11px; color: #fff; }
+.mz i { font-style: normal; font-size: 10px; color: var(--ink-2); }
+.mz em { font-style: normal; font-size: 10px; color: var(--red-2); }
+.mz.front { flex-direction: row; gap: 3px; }
+.mz-net { height: 4px; background: #CBD5E1; border-radius: 2px; margin: 0 -6px; font-size: 0; }
+.ins-tips { flex: 1; min-width: 0; }
+.ins-tip { margin: 0 0 6px; font-size: 13px; line-height: 1.35; color: var(--ink-2); font-weight: 600; }
+.ins-tip b { color: var(--ink); }
+.ins-tip.good b { color: var(--green-2); }
+.ins-tip.bad { color: var(--red-2); }
+
 /* ---------- hit tracker ---------- */
 .hit { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 12px 10px; transition: border-color .15s, box-shadow .15s; }
 .hit.armed { border-color: rgba(34, 197, 94, 0.6); }
