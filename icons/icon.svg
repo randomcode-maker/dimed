@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B1220"/>
+      <stop offset="1" stop-color="#060911"/>
+    </linearGradient>
+    <linearGradient id="ball" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <clipPath id="clip"><circle cx="256" cy="256" r="150"/></clipPath>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="150" fill="url(#ball)"/>
+  <g clip-path="url(#clip)" fill="none" stroke="#F1F5F9" stroke-width="14" stroke-linecap="round">
+    <g id="seam">
+      <path d="M256 256 Q 200 190 230 100"/>
+      <path d="M300 96 Q 266 186 322 254"/>
+    </g>
+    <use href="#seam" transform="rotate(120 256 256)"/>
+    <use href="#seam" transform="rotate(240 256 256)"/>
+  </g>
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#F1F5F9" stroke-width="14"/>
+</svg>
