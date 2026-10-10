@@ -132,6 +132,7 @@
     rotation: [null, null, null, null, null, null],
     serving: 'us', autoRotate: true, askQuality: true, trackHits: true,
     autoSet: true, bestOf: 5, matchOver: null,
+    subs: [], starts: {}, lastLineup: null,
     tab: 'game', selId: null
   });
 
@@ -142,6 +143,8 @@
       if (raw) {
         const s = Object.assign(base, JSON.parse(raw));
         if (!Array.isArray(s.rotation) || s.rotation.length !== 6) s.rotation = [null, null, null, null, null, null];
+        if (!Array.isArray(s.subs)) s.subs = [];
+        if (!s.starts || typeof s.starts !== 'object') s.starts = {};
         return s;
       }
     } catch (e) { /* storage unavailable: run in memory */ }
@@ -155,6 +158,7 @@
     land: null,            // landing spot tapped before the play is logged
     wait: null,            // { id } play just logged that is waiting for its landing spot
     waitTimer: null,
+    subId: null,           // bench player being subbed in, while the zone sheet is open
     statView: 'table', hitMode: 'dots', hitPlayer: 'all', hitResult: 'all'
   };
 
@@ -293,6 +297,32 @@
     for (let i = 0; i < 6; i++) S.rotation[i] = prev[ROTATE_MAP[i]];
   }
 
+  /* Lineups and subs. Stats belong to the player, so a sub only changes who stands in a zone. */
+  const EMPTY_COURT = () => [null, null, null, null, null, null];
+  const onCourtIds = () => S.rotation.filter((id) => id && player(id));
+  // Put pid in rotation slot i. Replacing someone counts as a substitution for this set.
+  function putInZone(i, pid) {
+    const out = S.rotation[i];
+    const from = S.rotation.indexOf(pid);
+    if (from >= 0) S.rotation[from] = null;
+    S.rotation[i] = pid;
+    if (out && out !== pid && player(out)) S.subs.push({ set: S.set, inId: pid, outId: out, z: ZONE_NUM[i], ts: Date.now() });
+  }
+  const subsThisSet = () => S.subs.filter((x) => x.set === S.set).length;
+  // Each set starts with an empty court; the last lineup is kept so it can be reused.
+  function clearForNewSet() {
+    if (S.rotation.some(Boolean)) S.lastLineup = S.rotation.slice();
+    S.rotation = EMPTY_COURT();
+    S.selId = null;
+  }
+  const reuseLabel = () => (S.set > 1 ? 'Same lineup as set ' + (S.set - 1) : 'Last lineup');
+  // Lineup offered for reuse: the previous set's starting six, else how the court looked when it ended.
+  function prevLineup() {
+    const l = S.starts[S.set - 1] || S.lastLineup;
+    if (!l || !l.some((id) => id && player(id))) return null;
+    return l.map((id) => (id && player(id) ? id : null));
+  }
+
   // Returns true if the team rotated because of this point.
   function applyPoint(side) {
     let rotated = false;
@@ -330,6 +360,7 @@
     };
     if (side) ev.side = side;
     if (land) { ev.land = { u: r3(land.u), v: r3(land.v) }; if (land.z !== undefined) ev.land.z = land.z; }
+    if (!S.starts[S.set] && S.rotation.some(Boolean)) S.starts[S.set] = S.rotation.slice();
     const scorer = scoringSide(ev);
     if (scorer) ev.rot = applyPoint(scorer);
     S.events.push(ev);
@@ -352,7 +383,9 @@
     w[side]++;
     if (w[side] >= setsToWin()) { S.matchOver = side; return; }
     const first = firstServer(S.set);
+    ev.lineup = S.rotation.slice();   // lets Undo put the court back
     S.set++;
+    clearForNewSet();
     // Serve alternates each set; the deciding set is a coin toss, so leave it for the scorer to check.
     if (first) S.serving = first === 'us' ? 'them' : 'us';
   }
@@ -368,8 +401,14 @@
           (S.set >= S.bestOf ? ' (check the coin toss).' : '.'));
     openModal(
       '<h3>' + esc(title) + '</h3><p class="sub">' + esc(msg) + '</p>' +
-      '<div class="btn-row"><button class="btn" data-a="askNo">' + (S.matchOver ? 'Done' : 'Start set ' + S.set) + '</button>' +
+      (S.matchOver ? '' : '<p class="sub">The court is empty for set ' + S.set + '. Pick the starting six.</p>') +
+      '<div class="btn-row">' + (S.matchOver ? '<button class="btn" data-a="askNo">Done</button>' : setStartButtons()) +
       '<button class="btn alt" data-a="undoSetPoint">Undo last point</button></div>');
+  }
+
+  function setStartButtons() {
+    return (prevLineup() ? '<button class="btn" data-a="reuseLineup">' + ic('rotate') + ' ' + reuseLabel() + '</button>' : '') +
+      '<button class="btn' + (prevLineup() ? ' alt' : '') + '" data-a="pickLineup">' + ic('court') + ' Pick lineup</button>';
   }
 
   function undo() {
@@ -378,7 +417,8 @@
     const reopen = last && last.endSet && (last.set === S.set || last.set === S.set - 1);
     if (!last || (last.set !== S.set && !reopen)) { toast('Nothing to undo in this set'); return; }
     S.events.pop();
-    if (reopen) { S.set = last.set; S.matchOver = null; }
+    if (reopen) { S.set = last.set; S.matchOver = null; if (last.lineup) S.rotation = last.lineup.slice(); S.subs = S.subs.filter((x) => x.set <= last.set); }
+    if (!S.events.some((e) => e.set === last.set)) delete S.starts[last.set];
     S.serving = last.ps;
     if (last.rot) unrotateTeam();
     if (U.wait && U.wait.id === last.id) clearWait();
@@ -649,7 +689,7 @@
       '<button class="btn alt" data-a="sample">' + ic('wand') + ' Load sample team</button></div></div>';
   }
 
-  function playerCard(p, rec, zone) {
+  function playerCard(p, rec, zone, subBtn) {
     const selected = S.selId === p.id && !U.oppMode;
     const avg = rec.qn ? (rec.qs / rec.qn).toFixed(1) : '';
     let quick = '';
@@ -659,13 +699,23 @@
         q[2] + '<b>' + rec[q[0]] + '</b></button>'
       ).join('') + '</div>';
     }
-    return '<div class="pcard ' + (selected ? 'selected' : '') + '">' +
+    const sub = subBtn ? '<button class="sub-btn' + (zone ? ' out' : '') + '" data-a="sub" data-id="' + p.id + '" aria-label="' + (zone ? 'Sub ' + esc(p.name) + ' out' : 'Sub ' + esc(p.name) + ' in') + '">' +
+      ic('swap') + '<span>' + (zone ? 'Out' : 'In') + '</span></button>' : '';
+    return '<div class="pcard ' + (selected ? 'selected' : '') + '"><div class="pcard-row">' +
       '<button class="pcard-top" data-a="pick" data-id="' + p.id + '">' +
         '<span class="avatar" style="background:' + avatarColor(p) + '">' + esc(initials(p.name)) +
         (zone ? '<span class="zone-badge">' + zone + '</span>' : '') + '</span>' +
         '<span class="pinfo"><span class="pname">' + esc(playerLabel(p)) + '</span>' +
         '<span class="psub"><span>' + esc(p.pos) + '</span><span>' + pts(rec) + ' pts</span>' + (avg ? '<span>Q ' + avg + '</span>' : '') + '</span></span>' +
-      '</button>' + quick + '</div>';
+      '</button>' + sub + '</div>' + quick + '</div>';
+  }
+
+  // Shown on the Game screen while the court is empty, e.g. at the start of every set.
+  function lineupCard() {
+    const prev = prevLineup();
+    return '<div class="lineup-card"><div class="lc-title">Set ' + S.set + ' lineup</div>' +
+      '<p>The court is empty. Tap <b>In</b> on a player to put them in a zone' + (prev ? ', or reuse the last one.' : '.') + '</p>' +
+      '<div class="lc-btns">' + setStartButtons() + '</div></div>';
   }
 
   function viewGame() {
@@ -682,13 +732,17 @@
       if (p) { onCourt.push([p, z]); courtIds[p.id] = true; }
     });
     const bench = S.players.filter((p) => !courtIds[p.id]);
-    let list;
+    const nSubs = subsThisSet();
+    let list = '';
     if (onCourt.length) {
-      list = '<div class="col-title"><span>On court</span></div>' +
-        onCourt.map((x) => playerCard(x[0], stats[x[0].id], x[1])).join('') +
-        (bench.length ? '<div class="bench-label">Bench</div>' + bench.map((p) => playerCard(p, stats[p.id], 0)).join('') : '');
-    } else {
-      list = '<div class="col-title"><span>Players</span></div>' + S.players.map((p) => playerCard(p, stats[p.id], 0)).join('');
+      list = '<div class="col-title"><span>On court</span>' + (onCourt.length < 6 ? '<span class="lc-count">' + onCourt.length + ' of 6</span>' : '') + '</div>' +
+        onCourt.map((x) => playerCard(x[0], stats[x[0].id], x[1], true)).join('');
+    } else if (!S.matchOver) {
+      list = lineupCard();
+    }
+    if (bench.length) {
+      list += '<div class="bench-label"><span>Bench</span>' + (nSubs ? '<span>' + nSubs + ' sub' + (nSubs === 1 ? '' : 's') + ' this set</span>' : '') + '</div>' +
+        bench.map((p) => playerCard(p, stats[p.id], 0, !S.matchOver)).join('');
     }
 
     const rec = sel ? stats[sel.id] : null;
@@ -757,6 +811,8 @@
     return '<div class="court-wrap">' +
       '<div class="court"><div class="net"></div><div class="court-grid">' + zones + '</div>' +
       '<div class="court-note">Front row on top · Zone 1 serves</div></div>' +
+      (!S.rotation.some(Boolean) && prevLineup() && !S.matchOver
+        ? '<div class="court-actions"><button class="btn green" data-a="reuseLineup">' + ic('rotate') + ' ' + reuseLabel() + '</button></div>' : '') +
       '<div class="court-actions">' +
         '<button class="btn" data-a="rotate">' + ic('rotate') + ' Rotate clockwise</button>' +
         '<button class="btn alt" data-a="unrotate">' + ic('rotateBack') + ' Rotate back</button>' +
@@ -1042,7 +1098,7 @@
       const sc = scoreFor(S.set);
       ask('Start set ' + (S.set + 1) + '?', 'Set ' + S.set + ' is saved as ' + sc.us + '–' + sc.them + '. The scoreboard resets for the new set.', 'Start next set').then((ok) => {
         if (!ok) return;
-        S.set++; save(); render(); toast('Set ' + S.set + ' · check who is serving');
+        S.set++; clearForNewSet(); save(); render(); toast('Set ' + S.set + ' · court cleared, pick the lineup');
       });
     },
     backdrop(d, e, el) { if (e.target === el) closeModal(true); },
@@ -1066,15 +1122,40 @@
       S.rotation.forEach((id) => { if (id) onCourt[id] = true; });
       const avail = S.players.filter((p) => !onCourt[p.id]);
       if (!cur && !avail.length) { toast(S.players.length ? 'Everyone is already on court' : 'Add players in Roster first'); return; }
-      openModal('<h3>Zone ' + ZONE_NUM[i] + '</h3><p class="sub">' + (cur ? 'Swap ' + esc(cur.name) + ' with a bench player, or take them off.' : 'Choose who plays here.') + '</p>' +
+      openModal('<h3>' + (cur ? 'Sub ' + esc(cur.name) + ' out' : 'Zone ' + ZONE_NUM[i]) + '</h3><p class="sub">' + (cur ? 'Zone ' + ZONE_NUM[i] + '. Pick who comes in from the bench, or take them off. Stats stay with each player.' : 'Choose who plays here.') + '</p>' +
         '<div class="pick-list">' +
         avail.map((p) => '<button class="pick" data-a="assign" data-id="' + p.id + '"><span class="avatar" style="background:' + avatarColor(p) + '">' + esc(initials(p.name)) + '</span>' +
           '<span class="pinfo"><span class="pname">' + esc(playerLabel(p)) + '</span><span class="psub">' + esc(p.pos) + '</span></span></button>').join('') +
         (cur ? '<button class="pick remove" data-a="unassign">' + ic('trash') + ' Take ' + esc(cur.name) + ' off the court</button>' : '') +
         '</div>');
     },
-    assign(d) { S.rotation[U.zoneIdx] = d.id; save(); closeModal(false); render(); },
+    assign(d) {
+      const out = S.rotation[U.zoneIdx] && player(S.rotation[U.zoneIdx]), p = player(d.id);
+      putInZone(U.zoneIdx, d.id); save(); closeModal(false); render();
+      if (out && p) toast(p.name + ' in for ' + out.name);
+    },
     unassign() { S.rotation[U.zoneIdx] = null; save(); closeModal(false); render(); },
+    // Sub button on the Game screen: a court player picks who comes in; a bench player picks a zone.
+    sub(d) {
+      const p = player(d.id);
+      if (!p) return;
+      const i = S.rotation.indexOf(p.id);
+      if (i >= 0) { A.zone({ i }); return; }
+      const rows = [1, 2, 3, 4, 5, 6].map((z) => {
+        const idx = ZONE_NUM.indexOf(z), cur = S.rotation[idx] && player(S.rotation[idx]);
+        return '<button class="pick" data-a="subTo" data-i="' + idx + '"><span class="avatar zone-av' + (cur ? '' : ' empty') + '"' + (cur ? ' style="background:' + avatarColor(cur) + '"' : '') + '>Z' + z + '</span>' +
+          '<span class="pinfo"><span class="pname">' + (cur ? 'For ' + esc(playerLabel(cur)) : 'Empty spot') + '</span><span class="psub">' + (cur ? esc(cur.pos) + ' · zone ' + z : 'Zone ' + z) + '</span></span></button>';
+      }).join('');
+      U.subId = p.id;
+      openModal('<h3>Sub ' + esc(p.name) + ' in</h3><p class="sub">Choose the zone they take. Stats stay with each player.</p><div class="pick-list">' + rows + '</div>');
+    },
+    subTo(d) { U.zoneIdx = Number(d.i); const id = U.subId; U.subId = null; if (player(id)) A.assign({ id }); },
+    reuseLineup() {
+      const l = prevLineup();
+      if (!l) return;
+      S.rotation = l; closeModal(false); save(); render(); toast('Set ' + S.set + ' lineup set');
+    },
+    pickLineup() { closeModal(false); A.tab({ tab: 'court' }); },
     rotate() {
       if (!S.rotation.some(Boolean)) { toast('Put players on the court first'); return; }
       rotateTeam(); save(); render(); toast('Rotated clockwise');
@@ -1094,6 +1175,7 @@
         if (!ok) return;
         S.players = S.players.filter((x) => x.id !== d.id);
         S.rotation = S.rotation.map((id) => (id === d.id ? null : id));
+        if (S.lastLineup) S.lastLineup = S.lastLineup.map((id) => (id === d.id ? null : id));
         if (S.selId === d.id) S.selId = null;
         save(); render(); toast(p.name + ' removed');
       });
@@ -1110,7 +1192,7 @@
     newMatch() {
       ask('Start a new match?', 'This clears all logged plays and scores but keeps your roster. Export first if you want a copy.', 'Clear match', true).then((ok) => {
         if (!ok) return;
-        S.events = []; S.adj = {}; S.set = 1; S.serving = 'us'; S.matchOver = null; U.statSet = 'all'; U.oppMode = false; U.land = null; clearWait();
+        S.events = []; S.adj = {}; S.set = 1; S.serving = 'us'; S.matchOver = null; S.subs = []; S.starts = {}; clearForNewSet(); U.statSet = 'all'; U.oppMode = false; U.land = null; clearWait();
         save(); render(); toast('New match ready');
       });
     },

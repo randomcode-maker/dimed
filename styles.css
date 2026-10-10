@@ -192,7 +192,27 @@ svg.ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-wid
 .qbtn.pts { background: rgba(34, 197, 94, 0.14); border-color: rgba(34, 197, 94, 0.55); color: var(--green-2); }
 .qbtn.skill { background: #1A2438; border-color: #2B3A57; color: #E2E8F0; }
 .qbtn.trans { background: rgba(59, 130, 246, 0.14); border-color: rgba(59, 130, 246, 0.6); color: var(--blue-3); }
-.bench-label { font-size: 11px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); margin: 6px 4px 0; }
+.bench-label { font-size: 11px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); margin: 6px 4px 0; display: flex; justify-content: space-between; gap: 8px; }
+.bench-label span + span, .lc-count { letter-spacing: 0.04em; text-transform: none; color: var(--ink-2); }
+.pcard-row { display: flex; align-items: stretch; }
+.pcard-row .pcard-top { flex: 1; min-width: 0; }
+.sub-btn {
+  flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  width: 44px; margin: 6px 6px 6px 0; border-radius: 10px; font-size: 11px; font-weight: 800;
+  background: rgba(34, 197, 94, 0.12); border: 1px solid rgba(34, 197, 94, 0.5); color: var(--green-2);
+}
+.sub-btn.out { background: #1A2438; border-color: #2B3A57; color: var(--ink-2); }
+.sub-btn .ic { width: 16px; height: 16px; }
+.sub-btn:active { transform: scale(0.95); }
+.lineup-card {
+  background: rgba(59, 130, 246, 0.1); border: 1.5px dashed rgba(59, 130, 246, 0.6); border-radius: var(--radius-sm); padding: 12px;
+}
+.lineup-card .lc-title { font-weight: 800; font-size: 15px; margin-bottom: 4px; }
+.lineup-card p { margin: 0 0 10px; font-size: 13px; color: var(--ink-2); line-height: 1.35; }
+.lc-btns { display: flex; flex-direction: column; gap: 6px; }
+.lc-btns .btn { justify-content: center; padding: 9px 12px; font-size: 13px; }
+.avatar.zone-av { font-size: 13px; }
+.avatar.zone-av.empty { background: transparent; border: 1.5px dashed var(--line-2); color: var(--ink-2); }
 
 .controls { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .selbar {
@@ -492,9 +512,13 @@ table.st { border-collapse: separate; border-spacing: 0; width: 100%; font-size:
   .tab { flex-direction: column; gap: 2px; font-size: 11px; padding: 7px 4px; }
   .game, .game.nohit { grid-template-columns: minmax(0, 1fr); grid-template-areas: "players" "sel" "hit" "controls"; }
   .players { flex-direction: row; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x proximity; }
-  .pcard { flex: none; width: 170px; scroll-snap-align: start; }
+  .pcard { flex: none; width: 190px; scroll-snap-align: start; }
   .pcard.selected { width: 250px; }
-  .bench-label { display: none; }
+  .bench-label { flex: none; flex-direction: column; justify-content: center; margin: 0; padding: 0 2px; writing-mode: vertical-rl; transform: rotate(180deg); }
+  .players { align-items: flex-start; }
+  .bench-label { align-self: stretch; }
+  .lineup-card { flex: none; width: 210px; padding: 10px; scroll-snap-align: start; }
+  .lineup-card p { display: none; }
   .team-score { font-size: 44px; }
   .mid { min-width: 78px; }
   .tiles { grid-template-columns: repeat(2, 1fr); }

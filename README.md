@@ -49,6 +49,10 @@ Use More, then Save backup, to move data between devices.
   best of 3 or 5 under More, or turn automatic set endings off and use Next set yourself.
 - The match ends when a team wins enough sets; the scoreboard shows FINAL and stops logging.
 - Undo works across a set or match ending: it takes back the winning point and reopens that set.
+- Subs: on the Game screen, tap In on a bench player and pick the zone they take, or Out on a court
+  player and pick who replaces them. Stats stay with each player; the bench shows the subs this set.
+- Every set starts with an empty court. Fill it from the bench with In, on the Court tab, or with
+  Same lineup as set N, which reuses the previous set's starting six.
 
 ## Tracking where hits land
 
