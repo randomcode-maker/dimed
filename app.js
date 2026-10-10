@@ -131,6 +131,7 @@
     players: [], events: [], set: 1, adj: {},
     rotation: [null, null, null, null, null, null],
     serving: 'us', autoRotate: true, askQuality: true, trackHits: true,
+    autoSet: true, bestOf: 5, matchOver: null,
     tab: 'game', selId: null
   });
 
@@ -183,6 +184,30 @@
     }
     const a = S.adj[setN] || { us: 0, them: 0 };
     return { us: clamp0(us + a.us), them: clamp0(them + a.them) };
+  }
+
+  /* Sets go to 25 (the deciding set to 15), win by 2. */
+  const setsToWin = () => Math.ceil(S.bestOf / 2);
+  const setTarget = (n) => (n >= S.bestOf ? 15 : 25);
+  function setWinner(n) {
+    const sc = scoreFor(n), t = setTarget(n);
+    if (Math.max(sc.us, sc.them) < t || Math.abs(sc.us - sc.them) < 2) return null;
+    return sc.us > sc.them ? 'us' : 'them';
+  }
+  // Sets won so far, counting every set before the current one (and the current one once the match is over).
+  function setsWon() {
+    const w = { us: 0, them: 0 };
+    const last = S.matchOver ? S.set : S.set - 1;
+    for (let n = 1; n <= last; n++) {
+      const sc = scoreFor(n);
+      if (sc.us > sc.them) w.us++; else if (sc.them > sc.us) w.them++;
+    }
+    return w;
+  }
+  // Who served first in a set: the serving side before its first rally that scored.
+  function firstServer(n) {
+    const e = S.events.find((ev) => ev.set === n && scoringSide(ev));
+    return e ? e.ps : null;
   }
 
   const blank = () => { const r = { qs: 0, qn: 0 }; STAT_KEYS.forEach((k) => { r[k] = 0; }); return r; };
@@ -308,19 +333,52 @@
     const scorer = scoringSide(ev);
     if (scorer) ev.rot = applyPoint(scorer);
     S.events.push(ev);
+    const ended = scorer && S.autoSet ? setWinner(S.set) : null;
+    if (ended) endSet(ev, ended);
     if (p) S.selId = null;   // a pick lasts one play, so the next action can be tapped first
     clearWait();
     if (!ev.land && p && S.trackHits && LAND_KEYS[key]) startWait(ev.id);
     save();
     render();
     if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) { /* ignore */ } }
-    return scorer;
+    if (ended) setOverModal(ev);
+    return ended ? null : scorer;
+  }
+
+  // The point in ev just won set S.set for `side`: start the next set, or end the match.
+  function endSet(ev, side) {
+    ev.endSet = side;
+    const w = setsWon();
+    w[side]++;
+    if (w[side] >= setsToWin()) { S.matchOver = side; return; }
+    const first = firstServer(S.set);
+    S.set++;
+    // Serve alternates each set; the deciding set is a coin toss, so leave it for the scorer to check.
+    if (first) S.serving = first === 'us' ? 'them' : 'us';
+  }
+
+  function setOverModal(ev) {
+    $('#toast').classList.remove('show');
+    const n = ev.set, sc = scoreFor(n), w = setsWon(), side = ev.endSet;
+    const name = side === 'us' ? S.team : S.opp;
+    const title = S.matchOver ? name + ' win the match' : name + ' win set ' + n;
+    const msg = 'Set ' + n + ': ' + sc.us + '–' + sc.them + '. Sets ' + w.us + '–' + w.them + '. ' +
+      (S.matchOver ? 'Export your stats from the Stats tab, or start a new match under More.'
+        : 'Set ' + S.set + ' is up, first to ' + setTarget(S.set) + '. ' + (S.serving === 'us' ? S.team : S.opp) + ' serves first' +
+          (S.set >= S.bestOf ? ' (check the coin toss).' : '.'));
+    openModal(
+      '<h3>' + esc(title) + '</h3><p class="sub">' + esc(msg) + '</p>' +
+      '<div class="btn-row"><button class="btn" data-a="askNo">' + (S.matchOver ? 'Done' : 'Start set ' + S.set) + '</button>' +
+      '<button class="btn alt" data-a="undoSetPoint">Undo last point</button></div>');
   }
 
   function undo() {
     const last = S.events[S.events.length - 1];
-    if (!last || last.set !== S.set) { toast('Nothing to undo in this set'); return; }
+    // A set-winning point can still be undone from the start of the next set.
+    const reopen = last && last.endSet && (last.set === S.set || last.set === S.set - 1);
+    if (!last || (last.set !== S.set && !reopen)) { toast('Nothing to undo in this set'); return; }
     S.events.pop();
+    if (reopen) { S.set = last.set; S.matchOver = null; }
     S.serving = last.ps;
     if (last.rot) unrotateTeam();
     if (U.wait && U.wait.id === last.id) clearWait();
@@ -339,10 +397,12 @@
     if (U.oppMode) {
       U.oppMode = false;
       takeLand(key, true);   // their plays are never stored, so a pending spot is just dropped
+      if (matchLocked()) { render(); return; }
       const scorer = pushEvent('opp', key, null);
       toast(S.opp + ': ' + STATS[key].label + (scorer ? ' · +1 ' + (scorer === 'us' ? S.team : S.opp) : ''));
       return;
     }
+    if (matchLocked()) return;
     if (!pid || !player(pid)) { openWho(key); return; }
     if (STATS[key].q && S.askQuality) { openRate(pid, key); return; }
     const p = player(pid);
@@ -350,9 +410,16 @@
     toast(p.name + ': ' + STATS[key].label + (scorer ? ' · +1 ' + (scorer === 'us' ? S.team : S.opp) : ''));
   }
 
+  function matchLocked() {
+    if (!S.matchOver) return false;
+    toast('Match is over. Undo the last point or start a new match under More.');
+    return true;
+  }
+
   /* ------------------------------------------------------------------ toast + modal */
   let toastTimer = null;
   function toast(msg) {
+    if (!$('#modal').hidden) return;   // the open sheet already says what happened
     const t = $('#toast');
     t.textContent = msg;
     t.classList.add('show');
@@ -444,7 +511,8 @@
   function renderScoreboard() {
     const sc = scoreFor(S.set);
     const hist = [];
-    for (let n = 1; n < S.set; n++) { const h = scoreFor(n); hist.push('<span>S' + n + ' ' + h.us + '–' + h.them + '</span>'); }
+    for (let n = 1; n < (S.matchOver ? S.set + 1 : S.set); n++) { const h = scoreFor(n); hist.push('<span>S' + n + ' ' + h.us + '–' + h.them + '</span>'); }
+    const w = setsWon();
     $('#scoreboard').innerHTML =
       '<div class="team us ' + (S.serving === 'us' ? 'serving' : '') + '">' +
         '<div class="team-name">' + esc(S.team) + '</div>' +
@@ -454,9 +522,12 @@
         '<button data-a="adj" data-side="us" data-d="1" aria-label="Add a point to ' + esc(S.team) + '">+</button></div>' +
       '</div>' +
       '<div class="mid">' +
-        '<div class="set-chip">SET ' + S.set + '</div>' +
-        '<button class="serve-toggle" data-a="toggleServe" title="Switch who is serving">' + ic('swap') + ' Serve: ' + (S.serving === 'us' ? 'Us' : 'Them') + '</button>' +
-        '<button class="serve-toggle" data-a="endSet">' + ic('plus') + ' Next set</button>' +
+        '<div class="set-chip' + (S.matchOver ? ' final' : '') + '">' + (S.matchOver ? 'FINAL' : 'SET ' + S.set) + '</div>' +
+        '<div class="sets-won" title="Sets won">Sets ' + w.us + '–' + w.them + '</div>' +
+        (S.matchOver
+          ? '<div class="match-result">' + esc(S.matchOver === 'us' ? S.team : S.opp) + ' win</div>'
+          : '<button class="serve-toggle" data-a="toggleServe" title="Switch who is serving">' + ic('swap') + ' Serve: ' + (S.serving === 'us' ? 'Us' : 'Them') + '</button>' +
+            '<button class="serve-toggle" data-a="endSet">' + ic('plus') + ' Next set</button>') +
         (hist.length ? '<div class="set-history">' + hist.join('') + '</div>' : '') +
       '</div>' +
       '<div class="team them ' + (S.serving === 'them' ? 'serving' : '') + '">' +
@@ -820,6 +891,11 @@
       toggleRow('trackHits', 'Track where hits land', 'Show the court on the Game screen and save the landing spot with each hit or serve.') +
       toggleRow('autoRotate', 'Auto-rotate on side-out', 'Rotate the court when we win a point while the other team served.') +
       '</div>' +
+      '<div class="card"><h2>Match</h2>' +
+      toggleRow('autoSet', 'End sets automatically', 'Finish a set at 25 (deciding set 15), win by 2, then start the next one. The match ends when a team wins enough sets.') +
+      '<div class="switch-row"><div class="t">Match length<small>Best of ' + S.bestOf + ': first to ' + setsToWin() + ' sets.</small></div>' +
+      '<div class="seg">' + [3, 5].map((n) => '<button class="' + (S.bestOf === n ? 'on' : '') + '" data-a="bestOf" data-n="' + n + '">Best of ' + n + '</button>').join('') + '</div></div>' +
+      '</div>' +
       '<div class="card"><h2>Your data</h2><p class="hint" style="text-align:left;margin:0 0 12px">Everything is stored on this device. Save a backup before clearing your browser or switching devices.</p>' +
       '<div class="btn-row"><button class="btn alt" data-a="backup">' + ic('save') + ' Save backup</button>' +
       '<button class="btn alt" data-a="restore">' + ic('upload') + ' Restore backup</button></div></div>' +
@@ -928,8 +1004,9 @@
     adj(d) {
       const side = d.side, delta = Number(d.delta || d.d);
       if (delta > 0) {
+        if (matchLocked()) return;
         const scorer = pushEvent('manual', '_pt', null, side);
-        toast('+1 ' + (scorer === 'us' ? S.team : S.opp));
+        if (scorer) toast('+1 ' + (scorer === 'us' ? S.team : S.opp));
       } else {
         if (scoreFor(S.set)[side] <= 0) return;
         const a = S.adj[S.set] || (S.adj[S.set] = { us: 0, them: 0 });
@@ -958,7 +1035,10 @@
     statView(d) { U.statView = d.v === 'hits' ? 'hits' : 'table'; render(); },
     hitMode(d) { U.hitMode = d.m === 'zones' ? 'zones' : 'dots'; render(); },
     toggleServe() { S.serving = S.serving === 'us' ? 'them' : 'us'; save(); render(); },
+    undoSetPoint() { closeModal(false); undo(); },
+    bestOf(d) { S.bestOf = Number(d.n) === 3 ? 3 : 5; save(); render(); },
     endSet() {
+      if (matchLocked()) return;
       const sc = scoreFor(S.set);
       ask('Start set ' + (S.set + 1) + '?', 'Set ' + S.set + ' is saved as ' + sc.us + '–' + sc.them + '. The scoreboard resets for the new set.', 'Start next set').then((ok) => {
         if (!ok) return;
@@ -1030,7 +1110,7 @@
     newMatch() {
       ask('Start a new match?', 'This clears all logged plays and scores but keeps your roster. Export first if you want a copy.', 'Clear match', true).then((ok) => {
         if (!ok) return;
-        S.events = []; S.adj = {}; S.set = 1; S.serving = 'us'; U.statSet = 'all'; U.oppMode = false; U.land = null; clearWait();
+        S.events = []; S.adj = {}; S.set = 1; S.serving = 'us'; S.matchOver = null; U.statSet = 'all'; U.oppMode = false; U.land = null; clearWait();
         save(); render(); toast('New match ready');
       });
     },
