@@ -1,4 +1,4 @@
-const CACHE = 'dimed-stats-v5';
+const CACHE = 'dimed-stats-v6';
 // The app shell: install fails if any of these can't be cached.
 const ASSETS = [
   './',
@@ -31,15 +31,16 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// Network first, so a new version shows up on the next load; the cache is the offline fallback.
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
+    fetch(e.request).then((res) => {
       if (res.ok) {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy));
       }
       return res;
-    }).catch(() => (e.request.mode === 'navigate' ? caches.match('./index.html') : Response.error())))
+    }).catch(() => caches.match(e.request).then((hit) => hit || (e.request.mode === 'navigate' ? caches.match('./index.html') : Response.error())))
   );
 });
