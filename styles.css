@@ -297,6 +297,33 @@ svg.ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-wid
 .hit.armed .hit-status svg.ic { color: var(--green-2); }
 .mini { margin-left: auto; padding: 5px 12px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line-2); font-weight: 800; font-size: 12px; color: var(--ink); flex: none; }
 .mini:hover { border-color: var(--blue-2); }
+/* live zone picker: a simple indoor court, their side split into zones 1-6 */
+.zcourt { cursor: default; }
+.vc-free { fill: #1D4E89; }
+.vc-floor { fill: #D9783F; }
+.vc-ours { fill: rgba(6, 9, 17, 0.24); }
+.vc-line { fill: none; stroke: #fff; stroke-width: 2.5; }
+.vc-div { fill: none; stroke: rgba(255, 255, 255, 0.45); stroke-width: 1.2; stroke-dasharray: 4 4; }
+.vc-lbl { font: 800 11px var(--font); letter-spacing: 0.18em; fill: rgba(255, 255, 255, 0.55); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.vc-top { font: 800 9px var(--font); letter-spacing: 0.14em; fill: rgba(255, 255, 255, 0.75); }
+.vc-top.end { text-anchor: end; }
+.vc-net { fill: #F8FAFC; stroke: #1E293B; stroke-width: 1; pointer-events: none; }
+.vc-post { fill: #334155; stroke: #F8FAFC; stroke-width: 1.5; pointer-events: none; }
+.zbtn { cursor: pointer; outline: none; }
+.zb-hit { fill: rgba(255, 255, 255, 0); stroke: none; transition: fill .12s; }
+.zbtn:hover .zb-hit { fill: rgba(255, 255, 255, 0.14); }
+.zbtn:focus-visible .zb-hit { stroke: #fff; stroke-width: 2; }
+.zbtn:active .zb-hit { fill: rgba(255, 255, 255, 0.26); }
+.zbtn.on .zb-hit { fill: rgba(255, 255, 255, 0.34); stroke: #fff; stroke-width: 3; }
+.zb-badge { fill: rgba(15, 23, 42, 0.55); stroke: rgba(255, 255, 255, 0.85); stroke-width: 1.5; pointer-events: none; }
+.zbtn.on .zb-badge { fill: var(--green); stroke: #fff; }
+.zb-num { font: 800 16px var(--font); fill: #fff; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.zb-cnt { font: 800 10px var(--font); fill: rgba(255, 255, 255, 0.9); text-anchor: end; pointer-events: none; }
+.zb-out { fill: rgba(239, 68, 68, 0.45); stroke: rgba(252, 165, 165, 0.7); stroke-width: 1.2; stroke-dasharray: 3 3; transition: fill .12s; }
+.zbtn.out:hover .zb-out { fill: rgba(239, 68, 68, 0.6); }
+.zbtn.out.on .zb-out { fill: rgba(239, 68, 68, 0.95); stroke: #fff; stroke-dasharray: none; stroke-width: 2; }
+.zb-outlbl { font: 800 9px var(--font); letter-spacing: 0.16em; fill: #fff; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+
 .spot-ok { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; color: var(--green-2); font-weight: 800; }
 .spot-ok svg.ic { width: 14px; height: 14px; }
 

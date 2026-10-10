@@ -99,6 +99,25 @@
   }
   const landXY = (l) => ({ x: CRT.X + l.u * CRT.L, y: CRT.Y + l.v * CRT.B });
 
+  /* Landing spots picked with the zone buttons are stored at the centre of that zone on their
+   * side, plus z = zone number (0 = out), so zoneOf / exports / the hit map read them like a tap. */
+  const ZONE_CELLS = [];   // { z, row, front } for their side, in drawing order
+  for (let r = 0; r < 3; r++) { ZONE_CELLS.push({ z: ZFRONT.their[r], row: r, front: true }); ZONE_CELLS.push({ z: ZBACK.their[r], row: r, front: false }); }
+  function zoneLand(z) {
+    if (!z) return { u: 1.05, v: 0.5, z: 0 };
+    const c = ZONE_CELLS.find((x) => x.z === z);
+    return { u: c.front ? r3(0.5 + 1 / 12) : r3(0.5 + 1 / 6 + 1 / 6), v: r3((c.row + 0.5) / 3), z };
+  }
+  // Spread zone-button spots around the zone centre on the hit map so they don't stack on one dot.
+  function dotXY(e) {
+    const p = landXY(e.land);
+    if (e.land.z === undefined) return p;
+    let h = 0;
+    for (const ch of String(e.id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    const jx = ((h & 255) / 255 - 0.5), jy = (((h >> 8) & 255) / 255 - 0.5);
+    return e.land.z ? { x: p.x + jx * CRT.L / 12, y: p.y + jy * CRT.B / 4.5 } : { x: p.x + jx * 12, y: p.y + jy * CRT.B * 0.8 };
+  }
+
   // Rotation: 6 slots in on-screen order  [Z4, Z3, Z2, Z5, Z6, Z1]
   const ZONE_NUM = [4, 3, 2, 5, 6, 1];
   // Clockwise rotation: Z2 -> Z1 -> Z6 -> Z5 -> Z4 -> Z3 -> Z2.  ROTATE_MAP[oldIndex] = newIndex
@@ -131,7 +150,7 @@
   function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } }
 
   const U = {
-    oppMode: false, pending: null, zoneIdx: null, resolver: null, onCancel: null, statSet: 'all', installEvt: null,
+    oppMode: false, pending: null, whoKey: null, zoneIdx: null, resolver: null, onCancel: null, statSet: 'all', installEvt: null,
     land: null,            // landing spot tapped before the play is logged
     wait: null,            // { id } play just logged that is waiting for its landing spot
     waitTimer: null,
@@ -285,7 +304,7 @@
       pn: p ? p.name : '', pnum: p ? p.num : '', ppos: p ? p.pos : ''
     };
     if (side) ev.side = side;
-    if (land) ev.land = { u: r3(land.u), v: r3(land.v) };
+    if (land) { ev.land = { u: r3(land.u), v: r3(land.v) }; if (land.z !== undefined) ev.land.z = land.z; }
     const scorer = scoringSide(ev);
     if (scorer) ev.rot = applyPoint(scorer);
     S.events.push(ev);
@@ -323,11 +342,7 @@
       toast(S.opp + ': ' + STATS[key].label + (scorer ? ' · +1 ' + (scorer === 'us' ? S.team : S.opp) : ''));
       return;
     }
-    if (!pid || !player(pid)) {
-      document.querySelectorAll('.pcard').forEach((c) => { c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 400); });
-      toast('Pick a player first');
-      return;
-    }
+    if (!pid || !player(pid)) { openWho(key); return; }
     if (STATS[key].q && S.askQuality) { openRate(pid, key); return; }
     const p = player(pid);
     const scorer = pushEvent(pid, key, null, null, takeLand(key, false));
@@ -354,6 +369,7 @@
     const cb = U.onCancel;
     U.onCancel = null;
     U.pending = null;
+    U.whoKey = null;
     const m = $('#modal');
     m.hidden = true;
     m.innerHTML = '';
@@ -385,6 +401,22 @@
     );
     // Keep U.pending alive through openModal (it only clears on close).
     U.pending = { pid, key };
+  }
+
+  // Action tapped before a player: ask who made the play, on-court players first.
+  function openWho(key) {
+    const courtIds = [1, 2, 3, 4, 5, 6].map((z) => S.rotation[ZONE_NUM.indexOf(z)]).filter((id) => id && player(id));
+    const list = courtIds.map(player).concat(S.players.filter((p) => courtIds.indexOf(p.id) < 0));
+    const pickBtn = (p) => '<button class="pick" data-a="who" data-id="' + p.id + '"><span class="avatar" style="background:' + avatarColor(p) + '">' + esc(initials(p.name)) +
+      (courtIds.indexOf(p.id) >= 0 ? '<span class="zone-badge">' + ZONE_NUM[S.rotation.indexOf(p.id)] + '</span>' : '') + '</span>' +
+      '<span class="pinfo"><span class="pname">' + esc(playerLabel(p)) + '</span><span class="psub">' + esc(p.pos) + '</span></span></button>';
+    openModal(
+      '<h3>Who got the ' + esc(STATS[key].label.toLowerCase()) + '?</h3>' +
+      '<p class="sub">Tap the player, or tap outside to cancel' +
+      (S.trackHits && LAND_KEYS[key] && U.land ? '<span class="spot-ok">' + ic('pin') + ' Landing spot saved</span>' : '') + '</p>' +
+      '<div class="pick-list who-list">' + list.map(pickBtn).join('') + '</div>'
+    );
+    U.whoKey = key;
   }
 
   /* ------------------------------------------------------------------ render */
@@ -469,7 +501,7 @@
   }
 
   function dotSvg(e, strong) {
-    const p = landXY(e.land);
+    const p = dotXY(e);
     const what = (STATS[e.key] ? STATS[e.key].label : e.key) + ' · ' + zoneLabel(e.land);
     return '<circle class="ld ' + outcomeOf(e.key) + (strong ? ' last' : '') + '" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) +
       '" r="' + (strong ? 8 : 6.5) + '"><title>' + esc((e.pn ? e.pn + ' · ' : '') + what) + '</title></circle>';
@@ -480,30 +512,59 @@
     if (el) el.outerHTML = hitCardHtml();
   }
 
+  // Live zone picker: a simple volleyball court, their side split into the six standard zones.
+  function zoneCourtSvg(counts) {
+    const X = CRT.X, Y = CRT.Y, L = CRT.L, B = CRT.B, mid = X + L / 2, a = L / 6;
+    const sel = U.land && U.land.z !== undefined ? U.land.z : null;
+    const cells = ZONE_CELLS.map((c) => {
+      const x = c.front ? mid : mid + a, w = c.front ? a : L / 2 - a;
+      const y = Y + c.row * B / 3, h = B / 3, cx = x + w / 2, cy = y + h / 2;
+      const n = counts[c.z] || 0;
+      return '<g class="zbtn' + (sel === c.z ? ' on' : '') + '" data-a="hitZone" data-z="' + c.z + '" role="button" tabindex="0" aria-label="Zone ' + c.z + '">' +
+        '<rect class="zb-hit" x="' + (x + 2) + '" y="' + (y + 2) + '" width="' + (w - 4) + '" height="' + (h - 4) + '" rx="5"/>' +
+        '<circle class="zb-badge" cx="' + cx + '" cy="' + cy + '" r="15"/>' +
+        '<text class="zb-num" x="' + cx + '" y="' + cy + '">' + c.z + '</text>' +
+        (n ? '<text class="zb-cnt" x="' + (x + w - 7) + '" y="' + (y + 13) + '">' + n + '</text>' : '') + '</g>';
+    }).join('');
+    const outN = counts[0] || 0;
+    return '<svg class="courtsvg zcourt" viewBox="0 0 ' + CRT.W + ' ' + CRT.H + '" role="group" aria-label="Court. Tap the zone where the ball landed.">' +
+      '<rect class="vc-free" width="' + CRT.W + '" height="' + CRT.H + '"/>' +
+      '<rect class="vc-floor" x="' + X + '" y="' + Y + '" width="' + L + '" height="' + B + '"/>' +
+      '<rect class="vc-ours" x="' + X + '" y="' + Y + '" width="' + L / 2 + '" height="' + B + '"/>' +
+      '<path class="vc-div" d="M' + (mid + a) + ' ' + Y + 'H' + (X + L) + 'M' + mid + ' ' + (Y + B / 3) + 'H' + (X + L) + 'M' + mid + ' ' + (Y + 2 * B / 3) + 'H' + (X + L) + '"/>' +
+      '<rect class="vc-line" x="' + X + '" y="' + Y + '" width="' + L + '" height="' + B + '"/>' +
+      '<path class="vc-line" d="M' + (mid - a) + ' ' + Y + 'V' + (Y + B) + 'M' + (mid + a) + ' ' + Y + 'V' + (Y + B) + '"/>' +
+      '<text class="vc-lbl" x="' + (X + (L / 2 - a) / 2) + '" y="' + (Y + B / 2) + '">OUR SIDE</text>' +
+      '<text class="vc-top" x="' + (X + 2) + '" y="20">' + esc(S.team.toUpperCase()) + '</text>' +
+      '<text class="vc-top end" x="' + (X + L - 2) + '" y="20">' + esc(S.opp.toUpperCase()) + '</text>' +
+      cells +
+      '<g class="zbtn out' + (sel === 0 ? ' on' : '') + '" data-a="hitZone" data-z="0" role="button" tabindex="0" aria-label="Out">' +
+        '<rect class="zb-out" x="' + (X + L + 5) + '" y="' + Y + '" width="' + (CRT.W - X - L - 9) + '" height="' + B + '" rx="6"/>' +
+        '<text class="zb-outlbl" transform="translate(' + (X + L + 5 + (CRT.W - X - L - 9) / 2) + ' ' + (Y + B / 2) + ') rotate(90)">OUT' + (outN ? ' · ' + outN : '') + '</text></g>' +
+      '<rect class="vc-net" x="' + (mid - 2.5) + '" y="' + (Y - 9) + '" width="5" height="' + (B + 18) + '" rx="2"/>' +
+      '<circle class="vc-post" cx="' + mid + '" cy="' + (Y - 12) + '" r="4.5"/><circle class="vc-post" cx="' + mid + '" cy="' + (Y + B + 12) + '" r="4.5"/>' +
+      '</svg>';
+  }
+
   function hitCardHtml() {
     const wait = U.wait && S.events.find((e) => e.id === U.wait.id);
     const recent = S.events.filter((e) => e.land && e.set === S.set && player(e.pid));
-    const shown = recent.slice(-12);
-    let inner = shown.map((e, i) => dotSvg(e, i === shown.length - 1 && !U.land)).join('');
-    if (U.land) {
-      const p = landXY(U.land);
-      inner += '<g transform="translate(' + p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ')"><circle class="pin-ring" r="13"/><circle class="pin-dot" r="6"/></g>';
-    }
+    const counts = {};
+    recent.forEach((e) => { const z = zoneOf(e.land); if (z.side === 'their') counts[z.z] = (counts[z.z] || 0) + 1; else if (z.side === 'out') counts[0] = (counts[0] || 0) + 1; });
     let status, btn = '';
     if (wait) {
-      status = ic('pin') + '<span>Tap the court to place <b>' + esc(wait.pn) + ' · ' + esc(STATS[wait.key].label) + '</b></span>';
+      status = ic('pin') + '<span>Tap the zone for <b>' + esc(wait.pn) + ' · ' + esc(STATS[wait.key].label) + '</b></span>';
       btn = '<button class="mini" data-a="hitSkip">Skip</button>';
     } else if (U.land) {
-      status = ic('pin') + '<span><b>Spot saved.</b> Now tap the action. Tap the court again to move it.</span>';
+      status = ic('pin') + '<span><b>' + esc(U.land.z === 0 ? 'Out' : 'Zone ' + (U.land.z !== undefined ? U.land.z : zoneOf(U.land).z)) + ' saved.</b> Now tap the action.</span>';
       btn = '<button class="mini" data-a="hitClear">Clear</button>';
     } else {
-      status = ic('pin') + '<span>Tap where the ball lands, then log the play.</span>';
+      status = ic('pin') + '<span>Tap the zone where the spike landed, then log the play.</span>';
     }
     return '<section class="hit ' + (wait ? 'wait' : U.land ? 'armed' : '') + '" id="hitCard">' +
       '<div class="hit-head"><span class="hit-title">Where did it land?</span>' +
       '<span class="live-chip"><i></i>' + recent.length + ' this set</span></div>' +
-      '<div class="hit-court">' + courtSvg(inner, 'data-a="hit" role="button" aria-label="Court. Tap where the ball landed."') + '</div>' +
-      '<div class="hit-legend"><span class="lg pt">Point</span><span class="lg err">Error</span><span class="lg play">In play</span><span class="lg-note">1–6 = zones</span></div>' +
+      '<div class="hit-court">' + zoneCourtSvg(counts) + '</div>' +
       '<div class="hit-status">' + status + btn + '</div></section>';
   }
 
@@ -563,15 +624,15 @@
     const oc = oppCounts();
     const who = U.oppMode
       ? '<div class="who"><small>Logging for</small>' + esc(S.opp) + ' – tap an action</div>'
-      : sel ? '<div class="who"><small>Logging for</small>' + esc(playerLabel(sel)) + '</div>'
-      : '<div class="who"><small>No player selected</small>Pick a player to log plays</div>';
+      : sel ? '<div class="who"><small>Logging for</small>' + esc(playerLabel(sel)) + '</div>' +
+        '<button class="chip-btn" data-a="unpick" title="Tap an action first, then pick the player">Clear</button>'
+      : '<div class="who"><small>No player selected</small>Tap an action, then pick who made it</div>';
 
     const groups = GROUPS.map((g) => {
       const tiles = g.keys.map((k) => {
         const d = STATS[k];
         const n = U.oppMode ? (oc[k] || 0) : (rec ? rec[k] : 0);
-        const dim = !U.oppMode && !sel ? ' dim' : '';
-        return '<button class="tile ' + g.id + dim + '" data-a="stat" data-key="' + k + '"><span>' + d.label +
+        return '<button class="tile ' + g.id + '" data-a="stat" data-key="' + k + '"><span>' + d.label +
           (d.note ? '<span class="note">' + d.note + '</span>' : '') + '</span><span class="cnt">' + n + '</span></button>';
       }).join('');
       let note = '';
@@ -741,7 +802,7 @@
         '<div><b>' + (evs.length ? Math.round(100 * inCourt / evs.length) + '%' : '–') + '</b><span>In the court</span></div>' +
         '<div><b>' + (evs.length - inCourt) + '</b><span>Out</span></div>' +
         '<div><b>' + points + '</b><span>Points</span></div></div>' +
-      (any ? '' : '<p class="hint">No landing spots yet. On the Game screen, tap the court where the ball lands, then log the play.</p>') +
+      (any ? '' : '<p class="hint">No landing spots yet. On the Game screen, tap the zone where the ball lands, then log the play.</p>') +
       '</div>';
   }
 
@@ -809,7 +870,7 @@
       log.push([e.set, new Date(e.ts).toLocaleString(), e.pnum || null, e.pn, e.ppos, d.label,
         { pts: 'Point', err: 'Error', skill: 'Skill', trans: 'Transition' }[d.g], e.q || null, e.q ? RATING_NAME[e.q] : null,
         side ? (side === 'us' ? S.team : S.opp) : null,
-        e.land ? zoneLabel(e.land) : null, e.land ? Math.round(e.land.u * 18 * 10) / 10 : null, e.land ? Math.round(e.land.v * 9 * 10) / 10 : null]);
+        e.land ? zoneLabel(e.land) : null, e.land && e.land.z === undefined ? Math.round(e.land.u * 18 * 10) / 10 : null, e.land && e.land.z === undefined ? Math.round(e.land.v * 9 * 10) / 10 : null]);
     });
     sheets.push({ name: 'Play log', rows: log, cols: [{ w: 6 }, { w: 22 }, { w: 6 }, { w: 22 }, { w: 7 }, { w: 20 }, { w: 12 }, { w: 13 }, { w: 10 }, { w: 18 }, { w: 11 }, { w: 11 }, { w: 11 }] });
 
@@ -854,7 +915,13 @@
   /* ------------------------------------------------------------------ actions */
   const A = {
     tab(d) { S.tab = d.tab; U.oppMode = false; save(); render(); window.scrollTo(0, 0); },
-    pick(d) { if (U.oppMode) { toast('Tap an action for their player, or cancel'); return; } S.selId = d.id; save(); render(); },
+    pick(d) { if (U.oppMode) { toast('Tap an action for their player, or cancel'); return; } S.selId = S.selId === d.id ? null : d.id; save(); render(); },
+    unpick() { S.selId = null; save(); render(); },
+    who(d) {
+      const key = U.whoKey;
+      closeModal(false);
+      if (key && player(d.id)) tapStat(key, d.id);
+    },
     opp() { U.oppMode = !U.oppMode; render(); },
     stat(d) { tapStat(d.key, d.id || S.selId); },
     undo() { undo(); },
@@ -869,18 +936,17 @@
         a[side]--; save(); render();
       }
     },
-    hit(d, e, el) {
-      const r = el.getBoundingClientRect();
-      if (!r.width || !r.height) return;
-      const x = (e.clientX - r.left) / r.width * CRT.W;
-      const y = (e.clientY - r.top) / r.height * CRT.H;
-      const l = { u: r3((x - CRT.X) / CRT.L), v: r3((y - CRT.Y) / CRT.B) };
+    hitZone(d) {
+      const l = zoneLand(Number(d.z));
       const w = U.wait && S.events.find((ev) => ev.id === U.wait.id);
       if (w) {
         w.land = l;
         clearWait();
         save(); render();
         toast(w.pn + ': ' + STATS[w.key].label + ' · ' + zoneLabel(l));
+      } else if (U.land && U.land.z === l.z) {
+        U.land = null;   // tapping the chosen zone again clears it
+        updateHitCard();
       } else {
         U.land = l;
         updateHitCard();
@@ -1017,6 +1083,8 @@
   });
 
   document.addEventListener('keydown', (e) => {
+    const zb = e.target.closest && e.target.closest('.zbtn');
+    if (zb && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); A.hitZone(zb.dataset); return; }
     if (U.pending && !$('#modal').hidden) {
       if (e.key >= '1' && e.key <= '4') { e.preventDefault(); A.rate({ q: e.key }); }
       else if (e.key === 'Escape') closeModal(true);
@@ -1049,7 +1117,7 @@
   }
 
   // Expose a tiny surface for automated tests.
-  window.__dimed = { get state() { return S; }, get ui() { return U; }, scoreFor, compute, buildSheets, zoneOf, zoneLabel };
+  window.__dimed = { get state() { return S; }, get ui() { return U; }, scoreFor, compute, buildSheets, zoneOf, zoneLabel, zoneLand };
 
   render();
 })();
