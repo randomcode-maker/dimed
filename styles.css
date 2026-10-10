@@ -114,6 +114,9 @@ svg.ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-wid
   background: var(--panel-2); border: 1px solid var(--line-2); color: #fff; border-radius: 999px; padding: 5px 14px;
   font-weight: 800; font-size: 12px; letter-spacing: 0.1em;
 }
+.set-chip.final { background: var(--blue); border-color: var(--blue); }
+.sets-won { font-size: 12px; font-weight: 800; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.match-result { font-size: 13px; font-weight: 800; color: var(--ink); text-align: center; }
 .serve-toggle {
   display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700;
   color: var(--ink-2); background: var(--panel); border: 1px solid var(--line-2); border-radius: 999px; padding: 5px 10px;

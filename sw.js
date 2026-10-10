@@ -1,4 +1,4 @@
-const CACHE = 'dimed-stats-v6';
+const CACHE = 'dimed-stats-v7';
 // The app shell: install fails if any of these can't be cached.
 const ASSETS = [
   './',

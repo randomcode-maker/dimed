@@ -44,6 +44,11 @@ Use More, then Save backup, to move data between devices.
   and nothing about their player is stored in the stats or the Excel export.
 - Auto-rotate turns the court clockwise when you win a point while they were serving.
 - Undo reverses the last play, including the score, serve, and any auto-rotation.
+- Sets end on their own at 25, win by 2 (the deciding set at 15). A sheet shows the result and the
+  next set starts, with the serve going to the team that received first last set. Set the match to
+  best of 3 or 5 under More, or turn automatic set endings off and use Next set yourself.
+- The match ends when a team wins enough sets; the scoreboard shows FINAL and stops logging.
+- Undo works across a set or match ending: it takes back the winning point and reopens that set.
 
 ## Tracking where hits land
 
