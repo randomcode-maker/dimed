@@ -1,4 +1,4 @@
-const CACHE = 'dimed-stats-v2';
+const CACHE = 'dimed-stats-v3';
 const ASSETS = [
   './',
   './index.html',
