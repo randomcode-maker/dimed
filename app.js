@@ -154,7 +154,7 @@
   function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } }
 
   const U = {
-    oppMode: false, pending: null, whoKey: null, zoneIdx: null, resolver: null, onCancel: null, statSet: 'all', installEvt: null,
+    oppMode: false, pending: null, armKey: null, zoneIdx: null, resolver: null, onCancel: null, statSet: 'all', installEvt: null,
     land: null,            // landing spot tapped before the play is logged
     wait: null,            // { id } play just logged that is waiting for its landing spot
     waitTimer: null,
@@ -243,18 +243,19 @@
 
   const pts = (r) => r.kill + r.ace + r.block + r.transKill;
   const errs = (r) => r.attackErr + r.serveErr + r.recErr + r.netErr;
-  const att = (r) => r.kill + r.attack + r.attackErr;
+  // Transition kills and hits count as kills and attack attempts, like any other swing.
+  const kills = (r) => r.kill + r.transKill;
+  const att = (r) => kills(r) + r.attack + r.transHit + r.attackErr;
   const srv = (r) => r.serve + r.ace + r.serveErr;
 
   // Column definitions shared by the on-screen table and the Excel export.
   const COLS = [
     { h: 'Pts',  t: 'Points scored: kills + aces + block kills + transition kills', g: 'pts', f: pts },
-    { h: 'K',    t: 'Kills', g: 'pts', f: (r) => r.kill },
+    { h: 'K',    t: 'Kills, including transition kills', g: 'pts', f: kills },
     { h: 'Ace',  t: 'Service aces', g: 'pts', f: (r) => r.ace },
     { h: 'BK',   t: 'Block kills', g: 'pts', f: (r) => r.block },
-    { h: 'TK',   t: 'Transition kills', g: 'pts', f: (r) => r.transKill },
-    { h: 'Att',  t: 'Attack attempts: kills + other attacks + attack errors', g: 'skill', f: att },
-    { h: 'Hit%', t: 'Hitting percentage: (kills - attack errors) / attempts', g: 'skill', fmt: 'dec3', f: (r) => (att(r) ? (r.kill - r.attackErr) / att(r) : null) },
+    { h: 'Att',  t: 'Attack attempts: kills + other attacks + transition hits + attack errors', g: 'skill', f: att },
+    { h: 'Hit%', t: 'Hitting percentage: (kills - attack errors) / attempts', g: 'skill', fmt: 'dec3', f: (r) => (att(r) ? (kills(r) - r.attackErr) / att(r) : null) },
     { h: 'Srv',  t: 'Total serves: serves in + aces + serve errors', g: 'skill', f: srv },
     { h: 'Srv%', t: 'Serve in %: (serves in + aces) / total serves', g: 'skill', fmt: 'dec3', f: (r) => (srv(r) ? (r.serve + r.ace) / srv(r) : null) },
     { h: 'BA',   t: 'Block assists (credit only, no point)', g: 'skill', f: (r) => r.blockAss },
@@ -262,7 +263,6 @@
     { h: 'Ast',  t: 'Assists', g: 'skill', f: (r) => r.assist },
     { h: 'Set',  t: 'Sets (non-assist)', g: 'skill', f: (r) => r.set },
     { h: 'Pass', t: 'Passes', g: 'skill', f: (r) => r.recPass },
-    { h: 'TH',   t: 'Transition hits', g: 'trans', f: (r) => r.transHit },
     { h: 'TD',   t: 'Transition digs', g: 'trans', f: (r) => r.transDig },
     { h: 'TB',   t: 'Transition blocks', g: 'trans', f: (r) => r.transBlock },
     { h: 'TS',   t: 'Transition sets', g: 'trans', f: (r) => r.transSet },
@@ -443,7 +443,9 @@
       return;
     }
     if (matchLocked()) return;
-    if (!pid || !player(pid)) { openWho(key); return; }
+    // Action tapped before a player: keep it armed until a player card is tapped.
+    if (!pid || !player(pid)) { U.armKey = U.armKey === key ? null : key; render(); return; }
+    U.armKey = null;
     if (STATS[key].q && S.askQuality) { openRate(pid, key); return; }
     const p = player(pid);
     const scorer = pushEvent(pid, key, null, null, takeLand(key, false));
@@ -477,7 +479,6 @@
     const cb = U.onCancel;
     U.onCancel = null;
     U.pending = null;
-    U.whoKey = null;
     const m = $('#modal');
     m.hidden = true;
     m.innerHTML = '';
@@ -509,22 +510,6 @@
     );
     // Keep U.pending alive through openModal (it only clears on close).
     U.pending = { pid, key };
-  }
-
-  // Action tapped before a player: ask who made the play, on-court players first.
-  function openWho(key) {
-    const courtIds = [1, 2, 3, 4, 5, 6].map((z) => S.rotation[ZONE_NUM.indexOf(z)]).filter((id) => id && player(id));
-    const list = courtIds.map(player).concat(S.players.filter((p) => courtIds.indexOf(p.id) < 0));
-    const pickBtn = (p) => '<button class="pick" data-a="who" data-id="' + p.id + '"><span class="avatar" style="background:' + avatarColor(p) + '">' + esc(initials(p.name)) +
-      (courtIds.indexOf(p.id) >= 0 ? '<span class="zone-badge">' + ZONE_NUM[S.rotation.indexOf(p.id)] + '</span>' : '') + '</span>' +
-      '<span class="pinfo"><span class="pname">' + esc(playerLabel(p)) + '</span><span class="psub">' + esc(p.pos) + '</span></span></button>';
-    openModal(
-      '<h3>Who got the ' + esc(STATS[key].label.toLowerCase()) + '?</h3>' +
-      '<p class="sub">Tap the player, or tap outside to cancel' +
-      (S.trackHits && LAND_KEYS[key] && U.land ? '<span class="spot-ok">' + ic('pin') + ' Landing spot saved</span>' : '') + '</p>' +
-      '<div class="pick-list who-list">' + list.map(pickBtn).join('') + '</div>'
-    );
-    U.whoKey = key;
   }
 
   /* ------------------------------------------------------------------ render */
@@ -747,8 +732,11 @@
 
     const rec = sel ? stats[sel.id] : null;
     const oc = oppCounts();
+    const arm = !U.oppMode && U.armKey && STATS[U.armKey];
     const who = U.oppMode
       ? '<div class="who"><small>Logging for</small>' + esc(S.opp) + ' – tap an action</div>'
+      : arm ? '<div class="who"><small>' + esc(arm.label) + '</small>Tap the player who made it</div>' +
+        '<button class="chip-btn" data-a="unpick">Cancel</button>'
       : sel ? '<div class="who"><small>Logging for</small>' + esc(playerLabel(sel)) + '</div>' +
         '<button class="chip-btn" data-a="unpick" title="Tap an action first, then pick the player">Clear</button>'
       : '<div class="who"><small>No player selected</small>Tap an action, then pick who made it</div>';
@@ -757,7 +745,7 @@
       const tiles = g.keys.map((k) => {
         const d = STATS[k];
         const n = U.oppMode ? (oc[k] || 0) : (rec ? rec[k] : 0);
-        return '<button class="tile ' + g.id + '" data-a="stat" data-key="' + k + '"><span>' + d.label +
+        return '<button class="tile ' + g.id + (arm && U.armKey === k ? ' armed' : '') + '" data-a="stat" data-key="' + k + '"><span>' + d.label +
           (d.note ? '<span class="note">' + d.note + '</span>' : '') + '</span><span class="cnt">' + n + '</span></button>';
       }).join('');
       let note = '';
@@ -781,8 +769,10 @@
         '<span class="time">' + new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '</span></div>';
     }).join('');
 
-    return '<div class="game' + (S.trackHits ? '' : ' nohit') + '">' +
-      '<aside class="g-players"><div class="players">' + list + '</div></aside>' +
+    return '<div class="game' + (S.trackHits ? '' : ' nohit') + (arm ? ' arming' : '') + '">' +
+      '<aside class="g-players">' +
+        (arm ? '<div class="arm-bar"><span><b>' + esc(arm.label) + '</b> · tap who made it</span><button class="chip-btn" data-a="unpick">Cancel</button></div>' : '') +
+        '<div class="players">' + list + '</div></aside>' +
       '<div class="g-sel"><div class="selbar">' + who +
         '<button class="chip-btn opp ' + (U.oppMode ? 'on' : '') + '" data-a="opp">' + ic('users') + (U.oppMode ? ' Cancel' : ' Their player') + '</button>' +
         '<button class="chip-btn dark" data-a="undo">' + ic('undo') + ' Undo</button></div></div>' +
@@ -864,7 +854,7 @@
       (S.players.length
         ? '<div class="table-wrap"><table class="st"><thead>' + head + '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></div>'
         : '<div class="card empty">Add players and log some plays to see stats here.</div>') +
-      '<p class="legend">Hold or hover a column heading for its meaning. Hit% = (kills − attack errors) ÷ attempts. Their player is never included in these tables or the export. Excel export has Totals, one sheet per set, Scores, a Landings sheet, and a full Play log.</p>';
+      '<p class="legend">Hold or hover a column heading for its meaning. K and Att include transition kills and hits. Hit% = (kills − attack errors) ÷ attempts. Their player is never included in these tables or the export. Excel export has Totals, one sheet per set, Scores, a Landings sheet, and a full Play log.</p>';
   }
 
   /* ---- hit map ---- */
@@ -1046,15 +1036,14 @@
 
   /* ------------------------------------------------------------------ actions */
   const A = {
-    tab(d) { S.tab = d.tab; U.oppMode = false; save(); render(); window.scrollTo(0, 0); },
-    pick(d) { if (U.oppMode) { toast('Tap an action for their player, or cancel'); return; } S.selId = S.selId === d.id ? null : d.id; save(); render(); },
-    unpick() { S.selId = null; save(); render(); },
-    who(d) {
-      const key = U.whoKey;
-      closeModal(false);
-      if (key && player(d.id)) tapStat(key, d.id);
+    tab(d) { S.tab = d.tab; U.oppMode = false; U.armKey = null; save(); render(); window.scrollTo(0, 0); },
+    pick(d) {
+      if (U.oppMode) { toast('Tap an action for their player, or cancel'); return; }
+      if (U.armKey) { tapStat(U.armKey, d.id); return; }
+      S.selId = S.selId === d.id ? null : d.id; save(); render();
     },
-    opp() { U.oppMode = !U.oppMode; render(); },
+    unpick() { S.selId = null; U.armKey = null; save(); render(); },
+    opp() { U.oppMode = !U.oppMode; U.armKey = null; render(); },
     stat(d) { tapStat(d.key, d.id || S.selId); },
     undo() { undo(); },
     adj(d) {
@@ -1251,6 +1240,7 @@
       if (e.key >= '1' && e.key <= '4') { e.preventDefault(); A.rate({ q: e.key }); }
       else if (e.key === 'Escape') closeModal(true);
     } else if (e.key === 'Escape' && !$('#modal').hidden) closeModal(true);
+    else if (e.key === 'Escape' && U.armKey) A.unpick();
   });
 
   $('#restoreFile').addEventListener('change', (e) => {

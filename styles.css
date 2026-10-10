@@ -183,6 +183,12 @@ svg.ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-wid
 .pcard.selected .avatar { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--pink); }
 .quick { display: none; grid-template-columns: repeat(3, 1fr); gap: 5px; padding: 0 8px 8px; }
 .pcard.selected .quick { display: grid; }
+/* Action tapped first: the player cards become the picker. */
+.game.arming .g-players { position: sticky; top: 0; z-index: 30; background: var(--bg); padding: 8px 0 4px; }
+.game.arming .pcard { border-color: var(--pink); box-shadow: 0 0 0 1px rgba(244, 114, 182, 0.4); }
+.arm-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 2px 8px; color: var(--pink); font-size: 14px; }
+.arm-bar b { color: #fff; }
+.tile.armed { box-shadow: 0 0 0 2px var(--pink), 0 0 18px rgba(244, 114, 182, 0.35); }
 .qbtn {
   display: flex; align-items: center; justify-content: space-between; gap: 4px;
   padding: 6px; border-radius: 9px; font-size: 11px; font-weight: 800; white-space: nowrap; border: 1px solid transparent;
