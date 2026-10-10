@@ -28,8 +28,8 @@ Use More, then Save backup, to move data between devices.
 | File | Purpose |
 | --- | --- |
 | `index.html` | App shell |
-| `styles.css` | Dimed look and layout |
-| `app.js` | All app logic: scoring, rotation, ratings, stats, export |
+| `styles.css` | Dimed look and layout (dark theme, blue accent) |
+| `app.js` | All app logic: scoring, rotation, ratings, hit landings, stats, export |
 | `xlsx.js` | Small built-in Excel (.xlsx) writer |
 | `sw.js` | Service worker for offline use (bump `CACHE` when you change files) |
 | `manifest.webmanifest`, `icons/` | Install metadata and app icons |
@@ -44,6 +44,23 @@ Use More, then Save backup, to move data between devices.
 - Auto-rotate turns the court clockwise when you win a point while they were serving.
 - Undo reverses the last play, including the score, serve, and any auto-rotation.
 
+## Tracking where hits land
+
+The Game screen has a "Where did it land?" court (our side on the left, theirs on the right).
+
+- Tap the court where the ball lands, then log the play. The spot attaches to the next hit-type play
+  (kill, attack, attack error, serve, ace, serve error, block kill, transition hit or kill).
+- Or log the play first, then tap the court within 20 seconds to add the spot to that play.
+- Taps outside the lines count as out. Zones 1–6 are numbered from each team's own side.
+- Dots are green for points, red for errors, and blue for in play.
+- Digs, sets, passes, and other actions never take a spot. A pending spot waits for the next hit.
+- Their player's hits are never stored, so a pending spot is dropped on their play.
+- Stats, then Hit map, shows every landing with filters for set, player, and result. Dots shows each
+  spot, and Zones shows counts and percentages per zone.
+- Turn it off under More, then Track where hits land.
+
 ## Excel export
 
-Totals, one sheet per set, Scores, and a full Play log (every play with its quality rating).
+Totals, one sheet per set, Scores, Landings (zone counts per player), and a full Play log
+(every play with its quality rating, landing zone, and Land X / Land Y in meters:
+X runs 0–18 from our baseline to theirs, Y runs 0–9 down from the top sideline).

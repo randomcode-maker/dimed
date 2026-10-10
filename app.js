@@ -25,7 +25,9 @@
     wand: '<path d="M5 19L17 7M14 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1zM19 12l.7 1.3L21 14l-1.3.7L19 16l-.7-1.3L17 14l1.3-.7z"/>',
     save: '<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>',
     upload: '<path d="M12 16V5M7 9l5-5 5 5M4 20h16"/>',
-    swap: '<path d="M7 7h12l-3-3M17 17H5l3 3"/>'
+    swap: '<path d="M7 7h12l-3-3M17 17H5l3 3"/>',
+    pin: '<path d="M12 21s7-6.2 7-11a7 7 0 10-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+    x: '<path d="M6 6l12 12M18 6L6 18"/>'
   };
   const ic = (n) => '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">' + (ICONS[n] || '') + '</svg>';
 
@@ -61,10 +63,6 @@
     { id: 'trans', title: 'Transition',    keys: ['transHit', 'transDig', 'transBlock', 'transSet'] }
   ];
   const QUICK = [['kill', 'pts', 'Kill'], ['dig', 'skill', 'Dig'], ['block', 'pts', 'Block'], ['transHit', 'trans', 'T-hit'], ['transBlock', 'trans', 'T-blk'], ['transSet', 'trans', 'T-set']];
-  const QUICK_BG = {
-    pts: 'linear-gradient(135deg,#12B76A,#047857)', skill: 'linear-gradient(135deg,#8B5CF6,#5B21B6)',
-    trans: 'linear-gradient(135deg,#FFC22E,#FF8A1F)', err: 'linear-gradient(135deg,#FB4B6B,#BE123C)'
-  };
   const RATINGS = [
     { q: 4, name: 'Perfect', hint: 'Best possible result' },
     { q: 3, name: 'Good',    hint: 'Positive, kept us in system' },
@@ -73,8 +71,33 @@
   ];
   const RATING_NAME = { 4: 'Perfect', 3: 'Good', 2: 'OK', 1: 'Poor' };
   const POSITIONS = ['OH', 'MB', 'S', 'OPP', 'L', 'DS', 'RS'];
-  const AVATAR_COLORS = ['#3D2BD6', '#FF3D8B', '#12B76A', '#FF8A1F', '#2F9BFF', '#7B2FF7', '#E11D48', '#00A38C'];
-  const GROUP_DOT = { pts: '#12B76A', err: '#E11D48', skill: '#7C3AED', trans: '#F59E0B' };
+  const AVATAR_COLORS = ['#2563EB', '#DB2777', '#16A34A', '#D97706', '#0891B2', '#7C3AED', '#DC2626', '#0D9488'];
+  const GROUP_DOT = { pts: '#22C55E', err: '#EF4444', skill: '#94A3B8', trans: '#3B82F6' };
+
+  /* ---- hit landing: court geometry and zones ----
+   * The court is drawn to scale (18 m x 9 m) with a 1.5 m margin for out-of-bounds taps.
+   * A landing spot is stored as { u, v }: u = 0..1 along the length (0 = our baseline,
+   * 1 = their baseline), v = 0..1 across the width (0 = top sideline). Outside 0..1 = out. */
+  const CRT = { W: 420, H: 240, X: 30, Y: 30, L: 360, B: 180 };
+  const LAND_KEYS = { kill: 1, ace: 1, block: 1, transKill: 1, attackErr: 1, serveErr: 1, attack: 1, serve: 1, transHit: 1 };
+  const outcomeOf = (key) => { const g = STATS[key] && STATS[key].g; return g === 'pts' ? 'pt' : g === 'err' ? 'err' : 'play'; };
+  const OUTCOME_NAME = { pt: 'Point', err: 'Error', play: 'In play' };
+  const ZFRONT = { their: [2, 3, 4], our: [4, 3, 2] };
+  const ZBACK = { their: [1, 6, 5], our: [5, 6, 1] };
+  const r3 = (n) => Math.round(n * 1000) / 1000;
+
+  function zoneOf(l) {
+    if (l.u < 0 || l.u > 1 || l.v < 0 || l.v > 1) return { side: 'out', z: 0 };
+    const side = l.u >= 0.5 ? 'their' : 'our';
+    const d = side === 'their' ? (l.u - 0.5) * 2 : (0.5 - l.u) * 2;   // 0 at the net .. 1 at the baseline
+    const row = l.v < 1 / 3 ? 0 : l.v < 2 / 3 ? 1 : 2;
+    return { side, z: (d < 1 / 3 ? ZFRONT : ZBACK)[side][row] };
+  }
+  function zoneLabel(l) {
+    const z = zoneOf(l);
+    return z.side === 'out' ? 'Out' : (z.side === 'their' ? 'Their Z' : 'Our Z') + z.z;
+  }
+  const landXY = (l) => ({ x: CRT.X + l.u * CRT.L, y: CRT.Y + l.v * CRT.B });
 
   // Rotation: 6 slots in on-screen order  [Z4, Z3, Z2, Z5, Z6, Z1]
   const ZONE_NUM = [4, 3, 2, 5, 6, 1];
@@ -88,7 +111,7 @@
     team: 'Our team', opp: 'Opponent',
     players: [], events: [], set: 1, adj: {},
     rotation: [null, null, null, null, null, null],
-    serving: 'us', autoRotate: true, askQuality: true,
+    serving: 'us', autoRotate: true, askQuality: true, trackHits: true,
     tab: 'game', selId: null
   });
 
@@ -107,7 +130,13 @@
   let S = load();
   function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } }
 
-  const U = { oppMode: false, pending: null, zoneIdx: null, resolver: null, onCancel: null, statSet: 'all', installEvt: null };
+  const U = {
+    oppMode: false, pending: null, zoneIdx: null, resolver: null, onCancel: null, statSet: 'all', installEvt: null,
+    land: null,            // landing spot tapped before the play is logged
+    wait: null,            // { id } play just logged that is waiting for its landing spot
+    waitTimer: null,
+    statView: 'table', hitMode: 'dots', hitPlayer: 'all', hitResult: 'all'
+  };
 
   const player = (id) => S.players.find((p) => p.id === id);
   const avatarColor = (p) => {
@@ -232,16 +261,36 @@
     return rotated;
   }
 
-  function pushEvent(pid, key, q, side) {
+  /* Landing spots: tap the court first (U.land) and the next hit-type play takes it, or log the
+   * play first and tap the court within WAIT_MS to add it to that play. */
+  const WAIT_MS = 20000;
+  function clearWait() { U.wait = null; clearTimeout(U.waitTimer); U.waitTimer = null; }
+  function startWait(id) {
+    clearWait();
+    U.wait = { id };
+    U.waitTimer = setTimeout(() => { U.wait = null; updateHitCard(); }, WAIT_MS);
+  }
+  // Called when a play is about to be logged. Returns the pending landing (or null) and clears it.
+  function takeLand(key, isOpp) {
+    if (!S.trackHits || !LAND_KEYS[key]) return null;
+    const l = U.land;
+    U.land = null;
+    return isOpp ? null : l;
+  }
+
+  function pushEvent(pid, key, q, side, land) {
     const p = player(pid);
     const ev = {
       id: uid(), set: S.set, pid, key, q: q || null, ts: Date.now(), ps: S.serving, rot: false,
       pn: p ? p.name : '', pnum: p ? p.num : '', ppos: p ? p.pos : ''
     };
     if (side) ev.side = side;
+    if (land) ev.land = { u: r3(land.u), v: r3(land.v) };
     const scorer = scoringSide(ev);
     if (scorer) ev.rot = applyPoint(scorer);
     S.events.push(ev);
+    clearWait();
+    if (!ev.land && p && S.trackHits && LAND_KEYS[key]) startWait(ev.id);
     save();
     render();
     if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) { /* ignore */ } }
@@ -254,6 +303,7 @@
     S.events.pop();
     S.serving = last.ps;
     if (last.rot) unrotateTeam();
+    if (U.wait && U.wait.id === last.id) clearWait();
     save();
     render();
     toast('Undid: ' + describe(last));
@@ -268,6 +318,7 @@
   function tapStat(key, pid) {
     if (U.oppMode) {
       U.oppMode = false;
+      takeLand(key, true);   // their plays are never stored, so a pending spot is just dropped
       const scorer = pushEvent('opp', key, null);
       toast(S.opp + ': ' + STATS[key].label + (scorer ? ' · +1 ' + (scorer === 'us' ? S.team : S.opp) : ''));
       return;
@@ -279,7 +330,7 @@
     }
     if (STATS[key].q && S.askQuality) { openRate(pid, key); return; }
     const p = player(pid);
-    const scorer = pushEvent(pid, key, null);
+    const scorer = pushEvent(pid, key, null, null, takeLand(key, false));
     toast(p.name + ': ' + STATS[key].label + (scorer ? ' · +1 ' + (scorer === 'us' ? S.team : S.opp) : ''));
   }
 
@@ -326,7 +377,8 @@
     const p = player(pid);
     openModal(
       '<h3>Rate the ' + esc(STATS[key].label.toLowerCase()) + '</h3>' +
-      '<p class="sub">' + esc(playerLabel(p)) + ' · tap a rating, or tap outside to cancel</p>' +
+      '<p class="sub">' + esc(playerLabel(p)) + ' · tap a rating, or tap outside to cancel' +
+      (S.trackHits && LAND_KEYS[key] && U.land ? '<span class="spot-ok">' + ic('pin') + ' Landing spot saved</span>' : '') + '</p>' +
       '<div class="rate-grid">' +
       RATINGS.map((r) => '<button class="rate r' + r.q + '" data-a="rate" data-q="' + r.q + '"><kbd>' + r.q + '</kbd>' + r.name + '<small>' + r.hint + '</small></button>').join('') +
       '</div><button class="skip" data-a="rate" data-q="0">Log without a rating</button>'
@@ -390,6 +442,71 @@
     ).join('');
   }
 
+  /* ---- court drawing (shared by the live tracker and the hit map) ---- */
+  function courtSvg(inner, attrs, zoneNums) {
+    const X = CRT.X, Y = CRT.Y, L = CRT.L, B = CRT.B, mid = X + L / 2, a = L / 6;
+    let nums = '';
+    if (zoneNums !== false) {
+      const ys = [Y + B / 6, Y + B / 2, Y + B * 5 / 6];
+      [['their', 1], ['our', -1]].forEach((s) => {
+        const fx = mid + s[1] * a / 2, bx = mid + s[1] * (a + (L / 2 - a) / 2);
+        for (let r = 0; r < 3; r++) {
+          nums += '<text class="zn" x="' + fx + '" y="' + ys[r] + '">' + ZFRONT[s[0]][r] + '</text>' +
+            '<text class="zn" x="' + bx + '" y="' + ys[r] + '">' + ZBACK[s[0]][r] + '</text>';
+        }
+      });
+    }
+    return '<svg class="courtsvg" viewBox="0 0 ' + CRT.W + ' ' + CRT.H + '" ' + (attrs || '') + '>' +
+      '<rect class="cv-out" width="' + CRT.W + '" height="' + CRT.H + '"/>' +
+      '<rect class="cv-court" x="' + X + '" y="' + Y + '" width="' + L + '" height="' + B + '"/>' +
+      '<path class="cv-att" d="M' + (mid - a) + ' ' + Y + 'V' + (Y + B) + 'M' + (mid + a) + ' ' + Y + 'V' + (Y + B) + '"/>' +
+      nums +
+      '<text class="cv-lbl" x="' + (X + 2) + '" y="21">OUR COURT</text>' +
+      '<text class="cv-lbl end" x="' + (X + L - 2) + '" y="21">THEIR COURT</text>' +
+      '<path class="cv-net-glow" d="M' + mid + ' ' + (Y - 8) + 'V' + (Y + B + 8) + '"/>' +
+      '<path class="cv-net" d="M' + mid + ' ' + (Y - 8) + 'V' + (Y + B + 8) + '"/>' +
+      inner + '</svg>';
+  }
+
+  function dotSvg(e, strong) {
+    const p = landXY(e.land);
+    const what = (STATS[e.key] ? STATS[e.key].label : e.key) + ' · ' + zoneLabel(e.land);
+    return '<circle class="ld ' + outcomeOf(e.key) + (strong ? ' last' : '') + '" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) +
+      '" r="' + (strong ? 8 : 6.5) + '"><title>' + esc((e.pn ? e.pn + ' · ' : '') + what) + '</title></circle>';
+  }
+
+  function updateHitCard() {
+    const el = $('#hitCard');
+    if (el) el.outerHTML = hitCardHtml();
+  }
+
+  function hitCardHtml() {
+    const wait = U.wait && S.events.find((e) => e.id === U.wait.id);
+    const recent = S.events.filter((e) => e.land && e.set === S.set && player(e.pid));
+    const shown = recent.slice(-12);
+    let inner = shown.map((e, i) => dotSvg(e, i === shown.length - 1 && !U.land)).join('');
+    if (U.land) {
+      const p = landXY(U.land);
+      inner += '<g transform="translate(' + p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ')"><circle class="pin-ring" r="13"/><circle class="pin-dot" r="6"/></g>';
+    }
+    let status, btn = '';
+    if (wait) {
+      status = ic('pin') + '<span>Tap the court to place <b>' + esc(wait.pn) + ' · ' + esc(STATS[wait.key].label) + '</b></span>';
+      btn = '<button class="mini" data-a="hitSkip">Skip</button>';
+    } else if (U.land) {
+      status = ic('pin') + '<span><b>Spot saved.</b> Now tap the action. Tap the court again to move it.</span>';
+      btn = '<button class="mini" data-a="hitClear">Clear</button>';
+    } else {
+      status = ic('pin') + '<span>Tap where the ball lands, then log the play.</span>';
+    }
+    return '<section class="hit ' + (wait ? 'wait' : U.land ? 'armed' : '') + '" id="hitCard">' +
+      '<div class="hit-head"><span class="hit-title">Where did it land?</span>' +
+      '<span class="live-chip"><i></i>' + recent.length + ' this set</span></div>' +
+      '<div class="hit-court">' + courtSvg(inner, 'data-a="hit" role="button" aria-label="Court. Tap where the ball landed."') + '</div>' +
+      '<div class="hit-legend"><span class="lg pt">Point</span><span class="lg err">Error</span><span class="lg play">In play</span><span class="lg-note">1–6 = zones</span></div>' +
+      '<div class="hit-status">' + status + btn + '</div></section>';
+  }
+
   /* ---- game view ---- */
   function emptyRoster() {
     return '<div class="card" style="text-align:center;padding:32px 16px">' +
@@ -406,7 +523,7 @@
     let quick = '';
     if (selected) {
       quick = '<div class="quick">' + QUICK.map((q) =>
-        '<button class="qbtn" style="background:' + QUICK_BG[q[1]] + (q[1] === 'trans' ? ';color:#3B1D00' : '') + '" data-a="stat" data-key="' + q[0] + '" data-id="' + p.id + '">' +
+        '<button class="qbtn ' + q[1] + '" data-a="stat" data-key="' + q[0] + '" data-id="' + p.id + '">' +
         q[2] + '<b>' + rec[q[0]] + '</b></button>'
       ).join('') + '</div>';
     }
@@ -469,20 +586,22 @@
       const side = scoringSide(e);
       const who2 = e.pid === 'opp' ? S.opp : e.pid === 'manual' ? 'Manual' : (e.pn || 'Player');
       const what = e.pid === 'manual' ? 'Point added' : (d ? d.label : e.key);
-      const color = e.pid === 'manual' ? '#8583B5' : (d ? GROUP_DOT[d.g] : '#8583B5');
+      const color = e.pid === 'manual' ? '#64748B' : (d ? GROUP_DOT[d.g] : '#64748B');
       return '<div class="feed-row"><span class="dotc" style="background:' + color + '"></span>' +
         '<span class="who">' + esc(who2) + '</span><span class="what">' + esc(what) + '</span>' +
+        (e.land ? '<span class="badge zn">' + zoneLabel(e.land) + '</span>' : '') +
         (e.q ? '<span class="badge q' + e.q + '">' + RATING_NAME[e.q] + '</span>' : '') +
         (side ? '<span class="badge pt-' + side + '">+1 ' + esc(side === 'us' ? S.team : S.opp) + '</span>' : '') +
         '<span class="time">' + new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '</span></div>';
     }).join('');
 
-    return '<div class="game"><aside><div class="players">' + list + '</div></aside>' +
-      '<div class="controls">' +
-        '<div class="selbar">' + who +
-          '<button class="chip-btn opp ' + (U.oppMode ? 'on' : '') + '" data-a="opp">' + ic('users') + (U.oppMode ? ' Cancel' : ' Their player') + '</button>' +
-          '<button class="chip-btn dark" data-a="undo">' + ic('undo') + ' Undo</button></div>' +
-        groups +
+    return '<div class="game' + (S.trackHits ? '' : ' nohit') + '">' +
+      '<aside class="g-players"><div class="players">' + list + '</div></aside>' +
+      '<div class="g-sel"><div class="selbar">' + who +
+        '<button class="chip-btn opp ' + (U.oppMode ? 'on' : '') + '" data-a="opp">' + ic('users') + (U.oppMode ? ' Cancel' : ' Their player') + '</button>' +
+        '<button class="chip-btn dark" data-a="undo">' + ic('undo') + ' Undo</button></div></div>' +
+      (S.trackHits ? '<div class="g-hit">' + hitCardHtml() + '</div>' : '') +
+      '<div class="g-controls controls">' + groups +
         '<section class="feed"><div class="col-title" style="padding:12px 14px 0"><span>Recent plays</span></div>' +
         (recent || '<div class="empty">Plays you log will show up here.</div>') + '</section>' +
       '</div></div>';
@@ -546,13 +665,84 @@
         return '<td class="' + (c.h === 'Pts' ? 'strong' : v === null || v === 0 ? 'muted' : '') + '">' + fmtCell(c, v) + '</td>';
       }).join('') + '</tr>').join('');
     const foot = '<tr><td>Team</td>' + COLS.map((c) => '<td>' + fmtCell(c, c.f(total)) + '</td>').join('') + '</tr>';
-    return '<div class="stats-bar"><select class="field" data-bind="statSet" aria-label="Set filter">' + setOpts.join('') + '</select><span class="grow"></span>' +
+    const bar = '<div class="stats-bar">' +
+      '<div class="seg" role="tablist"><button class="' + (U.statView === 'table' ? 'on' : '') + '" data-a="statView" data-v="table">Table</button>' +
+      '<button class="' + (U.statView === 'hits' ? 'on' : '') + '" data-a="statView" data-v="hits">Hit map</button></div>' +
+      '<select class="field" data-bind="statSet" aria-label="Set filter">' + setOpts.join('') + '</select><span class="grow"></span>' +
       '<button class="btn green" data-a="exportXlsx">' + ic('download') + ' Export Excel</button>' +
-      '<button class="btn alt" data-a="exportCsv">' + ic('download') + ' CSV</button></div>' +
+      '<button class="btn alt" data-a="exportCsv">' + ic('download') + ' CSV</button></div>';
+    if (U.statView === 'hits') return bar + viewHits();
+    return bar +
       (S.players.length
         ? '<div class="table-wrap"><table class="st"><thead>' + head + '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></div>'
         : '<div class="card empty">Add players and log some plays to see stats here.</div>') +
-      '<p class="legend">Hold or hover a column heading for its meaning. Hit% = (kills − attack errors) ÷ attempts. Their player is never included in these tables or the export. Excel export has Totals, one sheet per set, Scores, and a full Play log.</p>';
+      '<p class="legend">Hold or hover a column heading for its meaning. Hit% = (kills − attack errors) ÷ attempts. Their player is never included in these tables or the export. Excel export has Totals, one sheet per set, Scores, a Landings sheet, and a full Play log.</p>';
+  }
+
+  /* ---- hit map ---- */
+  function hitFiltered() {
+    return S.events.filter((e) => e.land && player(e.pid) &&
+      (U.statSet === 'all' || e.set === Number(U.statSet)) &&
+      (U.hitPlayer === 'all' || e.pid === U.hitPlayer) &&
+      (U.hitResult === 'all' || outcomeOf(e.key) === U.hitResult));
+  }
+
+  function zoneOverlay(evs) {
+    const X = CRT.X, Y = CRT.Y, L = CRT.L, B = CRT.B, mid = X + L / 2, a = L / 6;
+    const counts = {};
+    evs.forEach((e) => { const z = zoneOf(e.land); if (z.side !== 'out') { const k = z.side + z.z; counts[k] = (counts[k] || 0) + 1; } });
+    const max = Math.max.apply(null, [0].concat(Object.keys(counts).map((k) => counts[k])));
+    let out = '';
+    ['their', 'our'].forEach((side) => {
+      const dir = side === 'their' ? 1 : -1;
+      for (let r = 0; r < 3; r++) {
+        [['front', ZFRONT, a], ['back', ZBACK, L / 2 - a]].forEach((part) => {
+          const w = part[2];
+          const x = part[0] === 'front' ? (dir > 0 ? mid : mid - a) : (dir > 0 ? mid + a : X);
+          const y = Y + r * B / 3, h = B / 3;
+          const z = part[1][side][r];
+          const n = counts[side + z] || 0;
+          out += '<rect class="zcell ' + side + '" x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '"' +
+            (n ? ' style="fill-opacity:' + (0.14 + 0.6 * n / max).toFixed(2) + '"' : ' style="fill-opacity:0"') + '/>' +
+            '<text class="zlab" x="' + (x + (side === 'their' && part[0] === 'front' ? 11 : 6)) + '" y="' + (y + 12) + '">Z' + z + '</text>';
+          if (n) {
+            out += '<text class="zcount" x="' + (x + w / 2) + '" y="' + (y + h / 2 - 3) + '">' + n + '</text>' +
+              '<text class="zpct" x="' + (x + w / 2) + '" y="' + (y + h / 2 + 15) + '">' + Math.round(100 * n / evs.length) + '%</text>';
+          }
+        });
+      }
+    });
+    return out;
+  }
+
+  function viewHits() {
+    if (U.hitPlayer !== 'all' && !player(U.hitPlayer)) U.hitPlayer = 'all';
+    const any = S.events.some((e) => e.land && player(e.pid));
+    const evs = hitFiltered();
+    const inCourt = evs.filter((e) => zoneOf(e.land).side !== 'out').length;
+    const points = evs.filter((e) => outcomeOf(e.key) === 'pt').length;
+    const playerOpts = '<option value="all">All players</option>' +
+      S.players.map((p) => '<option value="' + p.id + '"' + (U.hitPlayer === p.id ? ' selected' : '') + '>' + esc(playerLabel(p)) + '</option>').join('');
+    const resOpts = [['all', 'All results'], ['pt', 'Points'], ['err', 'Errors'], ['play', 'In play']]
+      .map((r) => '<option value="' + r[0] + '"' + (U.hitResult === r[0] ? ' selected' : '') + '>' + r[1] + '</option>').join('');
+    const zones = U.hitMode === 'zones';
+    const inner = zones ? zoneOverlay(evs) : evs.map((e) => dotSvg(e, false)).join('');
+    return '<div class="card hitmap">' +
+      '<div class="hm-filters">' +
+        '<select class="field" data-bind="hitPlayer" aria-label="Player">' + playerOpts + '</select>' +
+        '<select class="field" data-bind="hitResult" aria-label="Result">' + resOpts + '</select>' +
+        '<div class="seg"><button class="' + (zones ? '' : 'on') + '" data-a="hitMode" data-m="dots">Dots</button>' +
+        '<button class="' + (zones ? 'on' : '') + '" data-a="hitMode" data-m="zones">Zones</button></div></div>' +
+      '<div class="hit-court big">' + courtSvg(inner, 'role="img" aria-label="Hit map"', !zones) + '</div>' +
+      '<div class="hit-legend"><span class="lg pt">Point</span><span class="lg err">Error</span><span class="lg play">In play</span>' +
+        '<span class="lg-note">Zones are numbered from each team’s own side</span></div>' +
+      '<div class="hit-stats">' +
+        '<div><b>' + evs.length + '</b><span>Tracked</span></div>' +
+        '<div><b>' + (evs.length ? Math.round(100 * inCourt / evs.length) + '%' : '–') + '</b><span>In the court</span></div>' +
+        '<div><b>' + (evs.length - inCourt) + '</b><span>Out</span></div>' +
+        '<div><b>' + points + '</b><span>Points</span></div></div>' +
+      (any ? '' : '<p class="hint">No landing spots yet. On the Game screen, tap the court where the ball lands, then log the play.</p>') +
+      '</div>';
   }
 
   /* ---- more / settings ---- */
@@ -566,6 +756,7 @@
       '<label class="lbl" for="oppName">Opponent</label><input id="oppName" class="field" style="width:100%" data-bind="opp" value="' + esc(S.opp) + '" maxlength="30"></div>' +
       '<div class="card"><h2>Tracking</h2>' +
       toggleRow('askQuality', 'Rate every play', 'Pop up a 1–4 quality rating after each skill action.') +
+      toggleRow('trackHits', 'Track where hits land', 'Show the court on the Game screen and save the landing spot with each hit or serve.') +
       toggleRow('autoRotate', 'Auto-rotate on side-out', 'Rotate the court when we win a point while the other team served.') +
       '</div>' +
       '<div class="card"><h2>Your data</h2><p class="hint" style="text-align:left;margin:0 0 12px">Everything is stored on this device. Save a backup before clearing your browser or switching devices.</p>' +
@@ -609,7 +800,7 @@
     const scores = [['Set', S.team, S.opp]];
     for (let n = 1; n <= S.set; n++) { const s = scoreFor(n); scores.push([n, s.us, s.them]); }
     sheets.push({ name: 'Scores', rows: scores, cols: [{ w: 6 }, { w: 20 }, { w: 20 }] });
-    const log = [['Set', 'Time', '#', 'Player', 'Pos', 'Action', 'Category', 'Quality (1-4)', 'Quality', 'Point for']];
+    const log = [['Set', 'Time', '#', 'Player', 'Pos', 'Action', 'Category', 'Quality (1-4)', 'Quality', 'Point for', 'Landed', 'Land X (m)', 'Land Y (m)']];
     S.events.forEach((e) => {
       if (e.pid === 'opp' || e.pid === 'manual') return;   // never export their player
       const d = STATS[e.key];
@@ -617,9 +808,24 @@
       const side = scoringSide(e);
       log.push([e.set, new Date(e.ts).toLocaleString(), e.pnum || null, e.pn, e.ppos, d.label,
         { pts: 'Point', err: 'Error', skill: 'Skill', trans: 'Transition' }[d.g], e.q || null, e.q ? RATING_NAME[e.q] : null,
-        side ? (side === 'us' ? S.team : S.opp) : null]);
+        side ? (side === 'us' ? S.team : S.opp) : null,
+        e.land ? zoneLabel(e.land) : null, e.land ? Math.round(e.land.u * 18 * 10) / 10 : null, e.land ? Math.round(e.land.v * 9 * 10) / 10 : null]);
     });
-    sheets.push({ name: 'Play log', rows: log, cols: [{ w: 6 }, { w: 22 }, { w: 6 }, { w: 22 }, { w: 7 }, { w: 20 }, { w: 12 }, { w: 13 }, { w: 10 }, { w: 18 }] });
+    sheets.push({ name: 'Play log', rows: log, cols: [{ w: 6 }, { w: 22 }, { w: 6 }, { w: 22 }, { w: 7 }, { w: 20 }, { w: 12 }, { w: 13 }, { w: 10 }, { w: 18 }, { w: 11 }, { w: 11 }, { w: 11 }] });
+
+    // Where hits landed, per player: counts in each zone of the other team's court.
+    const tracked = S.events.filter((e) => e.land && player(e.pid));
+    if (tracked.length) {
+      const rows = [['#', 'Player', 'Tracked', 'Their Z1', 'Their Z2', 'Their Z3', 'Their Z4', 'Their Z5', 'Their Z6', 'Our side', 'Out']];
+      const line = (p, list) => {
+        const c = { t1: 0, t2: 0, t3: 0, t4: 0, t5: 0, t6: 0, our: 0, out: 0 };
+        list.forEach((e) => { const z = zoneOf(e.land); if (z.side === 'their') c['t' + z.z]++; else c[z.side]++; });
+        return [p ? (p.num || null) : null, p ? p.name : 'Team', list.length, c.t1, c.t2, c.t3, c.t4, c.t5, c.t6, c.our, c.out];
+      };
+      S.players.forEach((p) => { const list = tracked.filter((e) => e.pid === p.id); if (list.length) rows.push(line(p, list)); });
+      rows.push(line(null, tracked));
+      sheets.push({ name: 'Landings', rows, cols: [{ w: 6 }, { w: 22 }, { w: 9 }, { w: 10 }, { w: 10 }, { w: 10 }, { w: 10 }, { w: 10 }, { w: 10 }, { w: 9 }, { w: 6 }] });
+    }
     return sheets;
   }
 
@@ -663,6 +869,28 @@
         a[side]--; save(); render();
       }
     },
+    hit(d, e, el) {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const x = (e.clientX - r.left) / r.width * CRT.W;
+      const y = (e.clientY - r.top) / r.height * CRT.H;
+      const l = { u: r3((x - CRT.X) / CRT.L), v: r3((y - CRT.Y) / CRT.B) };
+      const w = U.wait && S.events.find((ev) => ev.id === U.wait.id);
+      if (w) {
+        w.land = l;
+        clearWait();
+        save(); render();
+        toast(w.pn + ': ' + STATS[w.key].label + ' · ' + zoneLabel(l));
+      } else {
+        U.land = l;
+        updateHitCard();
+      }
+      if (navigator.vibrate) { try { navigator.vibrate(8); } catch (err) { /* ignore */ } }
+    },
+    hitSkip() { clearWait(); updateHitCard(); },
+    hitClear() { U.land = null; updateHitCard(); },
+    statView(d) { U.statView = d.v === 'hits' ? 'hits' : 'table'; render(); },
+    hitMode(d) { U.hitMode = d.m === 'zones' ? 'zones' : 'dots'; render(); },
     toggleServe() { S.serving = S.serving === 'us' ? 'them' : 'us'; save(); render(); },
     endSet() {
       const sc = scoreFor(S.set);
@@ -681,7 +909,7 @@
       const q = Number(d.q) || null;
       const p = player(pend.pid);
       if (!p) return;
-      const scorer = pushEvent(pend.pid, pend.key, q);
+      const scorer = pushEvent(pend.pid, pend.key, q, null, takeLand(pend.key, false));
       toast(p.name + ': ' + STATS[pend.key].label + (q ? ' · ' + RATING_NAME[q] : '') + (scorer ? ' · +1 ' + (scorer === 'us' ? S.team : S.opp) : ''));
     },
     zone(d) {
@@ -736,14 +964,14 @@
     newMatch() {
       ask('Start a new match?', 'This clears all logged plays and scores but keeps your roster. Export first if you want a copy.', 'Clear match', true).then((ok) => {
         if (!ok) return;
-        S.events = []; S.adj = {}; S.set = 1; S.serving = 'us'; U.statSet = 'all'; U.oppMode = false;
+        S.events = []; S.adj = {}; S.set = 1; S.serving = 'us'; U.statSet = 'all'; U.oppMode = false; U.land = null; clearWait();
         save(); render(); toast('New match ready');
       });
     },
     resetAll() {
       ask('Erase everything?', 'Roster, plays, and settings will be deleted from this device. This cannot be undone.', 'Erase everything', true).then((ok) => {
         if (!ok) return;
-        S = fresh(); U.statSet = 'all'; U.oppMode = false; save(); render(); toast('All data erased');
+        S = fresh(); U.statSet = 'all'; U.oppMode = false; U.land = null; clearWait(); save(); render(); toast('All data erased');
       });
     },
     install() {
@@ -780,6 +1008,8 @@
     const t = e.target;
     if (!t.dataset || !t.dataset.bind) return;
     if (t.dataset.bind === 'statSet') { U.statSet = t.value; render(); return; }
+    if (t.dataset.bind === 'hitPlayer') { U.hitPlayer = t.value; render(); return; }
+    if (t.dataset.bind === 'hitResult') { U.hitResult = t.value; render(); return; }
     if (t.dataset.bind === 'team' || t.dataset.bind === 'opp') {
       S[t.dataset.bind] = t.value.trim() || (t.dataset.bind === 'team' ? 'Our team' : 'Opponent');
       save(); render();
@@ -819,7 +1049,7 @@
   }
 
   // Expose a tiny surface for automated tests.
-  window.__dimed = { get state() { return S; }, scoreFor, compute, buildSheets };
+  window.__dimed = { get state() { return S; }, get ui() { return U; }, scoreFor, compute, buildSheets, zoneOf, zoneLabel };
 
   render();
 })();
