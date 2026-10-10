@@ -5,8 +5,9 @@ HTML, CSS, and JavaScript. No build step, no dependencies, works offline.
 
 ## Run it locally
 
+Run from the repo root (where `index.html` is):
+
 ```bash
-cd dimed-stats
 python3 -m http.server 8000
 # open http://localhost:8000
 ```
@@ -16,7 +17,7 @@ python3 -m http.server 8000
 The app is a folder of static files, so any static host works (Netlify, Vercel, GitHub Pages,
 Cloudflare Pages, your own site). It must be served over HTTPS for install and offline mode.
 
-1. Upload the whole `dimed-stats` folder.
+1. Upload the contents of the repo root (`index.html` and the files next to it).
 2. Open the URL on the phone or iPad.
 3. iPhone/iPad: Share, then Add to Home Screen. Android/Chrome: tap Install app.
 
