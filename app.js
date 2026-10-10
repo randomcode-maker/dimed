@@ -1,0 +1,825 @@
+/* Dimed Stats — courtside volleyball stat tracking.
+ * Plain JavaScript, no build step. All data lives on-device (localStorage). */
+(function () {
+  'use strict';
+
+  /* ------------------------------------------------------------------ helpers */
+  const $ = (s, r) => (r || document).querySelector(s);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const uid = () => Math.random().toString(36).slice(2, 10);
+  const clamp0 = (n) => (n < 0 ? 0 : n);
+
+  const ICONS = {
+    play: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5l5 3.5-5 3.5z"/>',
+    court: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M12 5v14M3 12h18"/>',
+    users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M17 14c2.5 0 4.5 2 4.5 4.5"/>',
+    table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/>',
+    gear: '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
+    undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/>',
+    download: '<path d="M12 4v11M7 11l5 5 5-5M4 20h16"/>',
+    trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    rotate: '<path d="M20 12a8 8 0 11-3-6.2"/><path d="M20 4v5h-5"/>',
+    rotateBack: '<path d="M4 12a8 8 0 103-6.2"/><path d="M4 4v5h5"/>',
+    ball: '<circle cx="12" cy="12" r="9"/><path d="M12 3c-3 3-3 15 0 18M3 12c3 3 15 3 18 0"/>',
+    wand: '<path d="M5 19L17 7M14 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1zM19 12l.7 1.3L21 14l-1.3.7L19 16l-.7-1.3L17 14l1.3-.7z"/>',
+    save: '<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>',
+    upload: '<path d="M12 16V5M7 9l5-5 5 5M4 20h16"/>',
+    swap: '<path d="M7 7h12l-3-3M17 17H5l3 3"/>'
+  };
+  const ic = (n) => '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">' + (ICONS[n] || '') + '</svg>';
+
+  /* ------------------------------------------------------------------ stat definitions */
+  // score: which side gets the point when a player on OUR team records it.
+  // q: whether the action is rated for quality (1-4).
+  const STATS = {
+    kill:      { label: 'Kill',             short: 'K',   score: 'us',   q: true, g: 'pts' },
+    ace:       { label: 'Ace',              short: 'Ace', score: 'us',   q: true, g: 'pts' },
+    block:     { label: 'Block kill',       short: 'BK',  score: 'us',   q: true, g: 'pts' },
+    transKill: { label: 'Transition kill',  short: 'TK',  score: 'us',   q: true, g: 'pts' },
+    attackErr: { label: 'Attack error',     short: 'AE',  score: 'them', g: 'err' },
+    serveErr:  { label: 'Serve error',      short: 'SE',  score: 'them', g: 'err' },
+    recErr:    { label: 'Reception error',  short: 'RE',  score: 'them', g: 'err' },
+    netErr:    { label: 'Net / foot fault', short: 'NE',  score: 'them', g: 'err' },
+    attack:    { label: 'Attack (no kill)', short: 'Att', q: true, g: 'skill' },
+    serve:     { label: 'Serve in',         short: 'Srv', q: true, g: 'skill' },
+    dig:       { label: 'Dig',              short: 'Dig', q: true, g: 'skill' },
+    assist:    { label: 'Assist',           short: 'Ast', q: true, g: 'skill' },
+    set:       { label: 'Set',              short: 'Set', q: true, g: 'skill' },
+    recPass:   { label: 'Pass',             short: 'Pass', q: true, g: 'skill' },
+    blockAss:  { label: 'Block assist',     short: 'BA',  q: true, g: 'skill', note: 'credit only' },
+    transHit:  { label: 'Transition hit',   short: 'TH',  q: true, g: 'trans' },
+    transDig:  { label: 'Transition dig',   short: 'TD',  q: true, g: 'trans' },
+    transBlock:{ label: 'Transition block', short: 'TB',  q: true, g: 'trans' },
+    transSet:  { label: 'Transition set',   short: 'TS',  q: true, g: 'trans' }
+  };
+  const STAT_KEYS = Object.keys(STATS);
+  const GROUPS = [
+    { id: 'pts',   title: 'Points earned', keys: ['kill', 'ace', 'block', 'transKill'] },
+    { id: 'err',   title: 'Errors',        keys: ['attackErr', 'serveErr', 'recErr', 'netErr'] },
+    { id: 'skill', title: 'Skills',        keys: ['attack', 'serve', 'dig', 'assist', 'set', 'recPass', 'blockAss'] },
+    { id: 'trans', title: 'Transition',    keys: ['transHit', 'transDig', 'transBlock', 'transSet'] }
+  ];
+  const QUICK = [['kill', 'pts', 'Kill'], ['dig', 'skill', 'Dig'], ['block', 'pts', 'Block'], ['transHit', 'trans', 'T-hit'], ['transBlock', 'trans', 'T-blk'], ['transSet', 'trans', 'T-set']];
+  const QUICK_BG = {
+    pts: 'linear-gradient(135deg,#12B76A,#047857)', skill: 'linear-gradient(135deg,#8B5CF6,#5B21B6)',
+    trans: 'linear-gradient(135deg,#FFC22E,#FF8A1F)', err: 'linear-gradient(135deg,#FB4B6B,#BE123C)'
+  };
+  const RATINGS = [
+    { q: 4, name: 'Perfect', hint: 'Best possible result' },
+    { q: 3, name: 'Good',    hint: 'Positive, kept us in system' },
+    { q: 2, name: 'OK',      hint: 'Playable, limited options' },
+    { q: 1, name: 'Poor',    hint: 'Weak or forced' }
+  ];
+  const RATING_NAME = { 4: 'Perfect', 3: 'Good', 2: 'OK', 1: 'Poor' };
+  const POSITIONS = ['OH', 'MB', 'S', 'OPP', 'L', 'DS', 'RS'];
+  const AVATAR_COLORS = ['#3D2BD6', '#FF3D8B', '#12B76A', '#FF8A1F', '#2F9BFF', '#7B2FF7', '#E11D48', '#00A38C'];
+  const GROUP_DOT = { pts: '#12B76A', err: '#E11D48', skill: '#7C3AED', trans: '#F59E0B' };
+
+  // Rotation: 6 slots in on-screen order  [Z4, Z3, Z2, Z5, Z6, Z1]
+  const ZONE_NUM = [4, 3, 2, 5, 6, 1];
+  // Clockwise rotation: Z2 -> Z1 -> Z6 -> Z5 -> Z4 -> Z3 -> Z2.  ROTATE_MAP[oldIndex] = newIndex
+  const ROTATE_MAP = [1, 2, 5, 0, 3, 4];
+  const Z1_INDEX = 5;
+
+  /* ------------------------------------------------------------------ state */
+  const KEY = 'dimed.stats.v1';
+  const fresh = () => ({
+    team: 'Our team', opp: 'Opponent',
+    players: [], events: [], set: 1, adj: {},
+    rotation: [null, null, null, null, null, null],
+    serving: 'us', autoRotate: true, askQuality: true,
+    tab: 'game', selId: null
+  });
+
+  function load() {
+    const base = fresh();
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) {
+        const s = Object.assign(base, JSON.parse(raw));
+        if (!Array.isArray(s.rotation) || s.rotation.length !== 6) s.rotation = [null, null, null, null, null, null];
+        return s;
+      }
+    } catch (e) { /* storage unavailable: run in memory */ }
+    return base;
+  }
+  let S = load();
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } }
+
+  const U = { oppMode: false, pending: null, zoneIdx: null, resolver: null, onCancel: null, statSet: 'all', installEvt: null };
+
+  const player = (id) => S.players.find((p) => p.id === id);
+  const avatarColor = (p) => {
+    const i = S.players.indexOf(p);
+    return AVATAR_COLORS[(i < 0 ? 0 : i) % AVATAR_COLORS.length];
+  };
+  const initials = (n) => n.trim().split(/\s+/).map((w) => w[0] || '').join('').toUpperCase().slice(0, 2) || '?';
+  const playerLabel = (p) => (p.num ? '#' + p.num + ' ' : '') + p.name;
+
+  /* ------------------------------------------------------------------ derived data */
+  function scoringSide(ev) {
+    if (ev.pid === 'manual') return ev.side || null;
+    const d = STATS[ev.key];
+    if (!d || !d.score) return null;
+    if (ev.pid === 'opp') return d.score === 'us' ? 'them' : 'us';
+    return d.score;
+  }
+
+  function scoreFor(setN) {
+    let us = 0, them = 0;
+    for (const e of S.events) {
+      if (e.set !== setN) continue;
+      const side = scoringSide(e);
+      if (side === 'us') us++; else if (side === 'them') them++;
+    }
+    const a = S.adj[setN] || { us: 0, them: 0 };
+    return { us: clamp0(us + a.us), them: clamp0(them + a.them) };
+  }
+
+  const blank = () => { const r = { qs: 0, qn: 0 }; STAT_KEYS.forEach((k) => { r[k] = 0; }); return r; };
+
+  function compute(setFilter) {
+    const m = {};
+    S.players.forEach((p) => { m[p.id] = blank(); });
+    for (const e of S.events) {
+      if (setFilter !== 'all' && e.set !== Number(setFilter)) continue;
+      const r = m[e.pid];
+      if (!r || !(e.key in r)) continue;
+      r[e.key]++;
+      if (e.q) { r.qs += e.q; r.qn++; }
+    }
+    return m;
+  }
+
+  function oppCounts() {
+    const c = {};
+    for (const e of S.events) if (e.pid === 'opp' && e.set === S.set) c[e.key] = (c[e.key] || 0) + 1;
+    return c;
+  }
+
+  function sumRecords(list) {
+    const t = blank();
+    list.forEach((r) => { Object.keys(t).forEach((k) => { t[k] += r[k]; }); });
+    return t;
+  }
+
+  const pts = (r) => r.kill + r.ace + r.block + r.transKill;
+  const errs = (r) => r.attackErr + r.serveErr + r.recErr + r.netErr;
+  const att = (r) => r.kill + r.attack + r.attackErr;
+  const srv = (r) => r.serve + r.ace + r.serveErr;
+
+  // Column definitions shared by the on-screen table and the Excel export.
+  const COLS = [
+    { h: 'Pts',  t: 'Points scored: kills + aces + block kills + transition kills', g: 'pts', f: pts },
+    { h: 'K',    t: 'Kills', g: 'pts', f: (r) => r.kill },
+    { h: 'Ace',  t: 'Service aces', g: 'pts', f: (r) => r.ace },
+    { h: 'BK',   t: 'Block kills', g: 'pts', f: (r) => r.block },
+    { h: 'TK',   t: 'Transition kills', g: 'pts', f: (r) => r.transKill },
+    { h: 'Att',  t: 'Attack attempts: kills + other attacks + attack errors', g: 'skill', f: att },
+    { h: 'Hit%', t: 'Hitting percentage: (kills - attack errors) / attempts', g: 'skill', fmt: 'dec3', f: (r) => (att(r) ? (r.kill - r.attackErr) / att(r) : null) },
+    { h: 'Srv',  t: 'Total serves: serves in + aces + serve errors', g: 'skill', f: srv },
+    { h: 'Srv%', t: 'Serve in %: (serves in + aces) / total serves', g: 'skill', fmt: 'dec3', f: (r) => (srv(r) ? (r.serve + r.ace) / srv(r) : null) },
+    { h: 'BA',   t: 'Block assists (credit only, no point)', g: 'skill', f: (r) => r.blockAss },
+    { h: 'Dig',  t: 'Digs', g: 'skill', f: (r) => r.dig },
+    { h: 'Ast',  t: 'Assists', g: 'skill', f: (r) => r.assist },
+    { h: 'Set',  t: 'Sets (non-assist)', g: 'skill', f: (r) => r.set },
+    { h: 'Pass', t: 'Passes', g: 'skill', f: (r) => r.recPass },
+    { h: 'TH',   t: 'Transition hits', g: 'trans', f: (r) => r.transHit },
+    { h: 'TD',   t: 'Transition digs', g: 'trans', f: (r) => r.transDig },
+    { h: 'TB',   t: 'Transition blocks', g: 'trans', f: (r) => r.transBlock },
+    { h: 'TS',   t: 'Transition sets', g: 'trans', f: (r) => r.transSet },
+    { h: 'AE',   t: 'Attack errors', g: 'err', f: (r) => r.attackErr },
+    { h: 'SE',   t: 'Serve errors', g: 'err', f: (r) => r.serveErr },
+    { h: 'RE',   t: 'Reception errors', g: 'err', f: (r) => r.recErr },
+    { h: 'NE',   t: 'Net / foot faults', g: 'err', f: (r) => r.netErr },
+    { h: 'Err',  t: 'Total errors', g: 'err', f: errs },
+    { h: 'Avg Q', t: 'Average quality rating (1 poor – 4 perfect)', g: 'skill', fmt: 'dec2', f: (r) => (r.qn ? r.qs / r.qn : null) }
+  ];
+
+  const fmtCell = (col, v) => {
+    if (v === null || v === undefined) return '–';
+    if (col.fmt === 'dec3') { const s = Math.abs(v).toFixed(3); return (v < 0 ? '-' : '') + (s.indexOf('0') === 0 ? s.slice(1) : s); }
+    if (col.fmt === 'dec2') return v.toFixed(2);
+    return String(v);
+  };
+  const exportCell = (col, v) => {
+    if (v === null || v === undefined) return null;
+    if (col.fmt === 'dec3') return Math.round(v * 1000) / 1000;
+    if (col.fmt === 'dec2') return Math.round(v * 100) / 100;
+    return v;
+  };
+
+  /* ------------------------------------------------------------------ game logic */
+  function rotateTeam() {
+    const prev = S.rotation.slice();
+    for (let i = 0; i < 6; i++) S.rotation[ROTATE_MAP[i]] = prev[i];
+  }
+  function unrotateTeam() {
+    const prev = S.rotation.slice();
+    for (let i = 0; i < 6; i++) S.rotation[i] = prev[ROTATE_MAP[i]];
+  }
+
+  // Returns true if the team rotated because of this point.
+  function applyPoint(side) {
+    let rotated = false;
+    if (side === 'us') {
+      if (S.serving === 'them' && S.autoRotate && S.rotation.some(Boolean)) { rotateTeam(); rotated = true; }
+      S.serving = 'us';
+    } else {
+      S.serving = 'them';
+    }
+    return rotated;
+  }
+
+  function pushEvent(pid, key, q, side) {
+    const p = player(pid);
+    const ev = {
+      id: uid(), set: S.set, pid, key, q: q || null, ts: Date.now(), ps: S.serving, rot: false,
+      pn: p ? p.name : '', pnum: p ? p.num : '', ppos: p ? p.pos : ''
+    };
+    if (side) ev.side = side;
+    const scorer = scoringSide(ev);
+    if (scorer) ev.rot = applyPoint(scorer);
+    S.events.push(ev);
+    save();
+    render();
+    if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) { /* ignore */ } }
+    return scorer;
+  }
+
+  function undo() {
+    const last = S.events[S.events.length - 1];
+    if (!last || last.set !== S.set) { toast('Nothing to undo in this set'); return; }
+    S.events.pop();
+    S.serving = last.ps;
+    if (last.rot) unrotateTeam();
+    save();
+    render();
+    toast('Undid: ' + describe(last));
+  }
+
+  function describe(ev) {
+    if (ev.pid === 'manual') return 'Manual point';
+    const who = ev.pid === 'opp' ? S.opp : (ev.pn || 'Player');
+    return who + ' – ' + (STATS[ev.key] ? STATS[ev.key].label : ev.key);
+  }
+
+  function tapStat(key, pid) {
+    if (U.oppMode) {
+      U.oppMode = false;
+      const scorer = pushEvent('opp', key, null);
+      toast(S.opp + ': ' + STATS[key].label + (scorer ? ' · +1 ' + (scorer === 'us' ? S.team : S.opp) : ''));
+      return;
+    }
+    if (!pid || !player(pid)) {
+      document.querySelectorAll('.pcard').forEach((c) => { c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 400); });
+      toast('Pick a player first');
+      return;
+    }
+    if (STATS[key].q && S.askQuality) { openRate(pid, key); return; }
+    const p = player(pid);
+    const scorer = pushEvent(pid, key, null);
+    toast(p.name + ': ' + STATS[key].label + (scorer ? ' · +1 ' + (scorer === 'us' ? S.team : S.opp) : ''));
+  }
+
+  /* ------------------------------------------------------------------ toast + modal */
+  let toastTimer = null;
+  function toast(msg) {
+    const t = $('#toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  function openModal(html, onCancel) {
+    U.onCancel = onCancel || null;
+    const m = $('#modal');
+    m.innerHTML = '<div class="backdrop" data-a="backdrop"><div class="sheet" role="dialog" aria-modal="true">' + html + '</div></div>';
+    m.hidden = false;
+  }
+  function closeModal(cancelled) {
+    const cb = U.onCancel;
+    U.onCancel = null;
+    U.pending = null;
+    const m = $('#modal');
+    m.hidden = true;
+    m.innerHTML = '';
+    if (cancelled && cb) cb();
+  }
+
+  function ask(title, msg, okLabel, danger) {
+    return new Promise((resolve) => {
+      U.resolver = resolve;
+      openModal(
+        '<h3>' + esc(title) + '</h3><p class="sub">' + esc(msg) + '</p>' +
+        '<div class="btn-row"><button class="btn ' + (danger ? 'pinkb' : '') + '" data-a="askYes">' + esc(okLabel) + '</button>' +
+        '<button class="btn alt" data-a="askNo">Cancel</button></div>',
+        () => { const r = U.resolver; U.resolver = null; if (r) r(false); }
+      );
+    });
+  }
+
+  function openRate(pid, key) {
+    U.pending = { pid, key };
+    const p = player(pid);
+    openModal(
+      '<h3>Rate the ' + esc(STATS[key].label.toLowerCase()) + '</h3>' +
+      '<p class="sub">' + esc(playerLabel(p)) + ' · tap a rating, or tap outside to cancel</p>' +
+      '<div class="rate-grid">' +
+      RATINGS.map((r) => '<button class="rate r' + r.q + '" data-a="rate" data-q="' + r.q + '"><kbd>' + r.q + '</kbd>' + r.name + '<small>' + r.hint + '</small></button>').join('') +
+      '</div><button class="skip" data-a="rate" data-q="0">Log without a rating</button>'
+    );
+    // Keep U.pending alive through openModal (it only clears on close).
+    U.pending = { pid, key };
+  }
+
+  /* ------------------------------------------------------------------ render */
+  function render() {
+    renderScoreboard();
+    renderTabs();
+    renderAppbar();
+    const view = $('#view');
+    const scrollY = window.scrollY;
+    const strip = $('.players', view);
+    const stripLeft = strip ? strip.scrollLeft : 0;
+    view.innerHTML = VIEWS[S.tab]();
+    const strip2 = $('.players', view);
+    if (strip2) strip2.scrollLeft = stripLeft;
+    window.scrollTo(0, scrollY);
+  }
+
+  function renderAppbar() {
+    $('#appbarRight').innerHTML = U.installEvt
+      ? '<button class="pill-link" data-a="install">' + ic('download') + ' Install app</button>'
+      : '';
+  }
+
+  function renderScoreboard() {
+    const sc = scoreFor(S.set);
+    const hist = [];
+    for (let n = 1; n < S.set; n++) { const h = scoreFor(n); hist.push('<span>S' + n + ' ' + h.us + '–' + h.them + '</span>'); }
+    $('#scoreboard').innerHTML =
+      '<div class="team us ' + (S.serving === 'us' ? 'serving' : '') + '">' +
+        '<div class="team-name">' + esc(S.team) + '</div>' +
+        '<div class="team-score">' + sc.us + '</div>' +
+        '<div class="serve-flag ' + (S.serving === 'us' ? '' : 'off') + '">' + ic('ball').replace('class="ic"', 'class="ic" style="width:12px;height:12px"') + ' Serving</div>' +
+        '<div class="adj"><button data-a="adj" data-side="us" data-d="-1" aria-label="Subtract a point from ' + esc(S.team) + '">−</button>' +
+        '<button data-a="adj" data-side="us" data-d="1" aria-label="Add a point to ' + esc(S.team) + '">+</button></div>' +
+      '</div>' +
+      '<div class="mid">' +
+        '<div class="set-chip">SET ' + S.set + '</div>' +
+        '<button class="serve-toggle" data-a="toggleServe" title="Switch who is serving">' + ic('swap') + ' Serve: ' + (S.serving === 'us' ? 'Us' : 'Them') + '</button>' +
+        '<button class="serve-toggle" data-a="endSet">' + ic('plus') + ' Next set</button>' +
+        (hist.length ? '<div class="set-history">' + hist.join('') + '</div>' : '') +
+      '</div>' +
+      '<div class="team them ' + (S.serving === 'them' ? 'serving' : '') + '">' +
+        '<div class="team-name">' + esc(S.opp) + '</div>' +
+        '<div class="team-score">' + sc.them + '</div>' +
+        '<div class="serve-flag ' + (S.serving === 'them' ? '' : 'off') + '">' + ic('ball').replace('class="ic"', 'class="ic" style="width:12px;height:12px"') + ' Serving</div>' +
+        '<div class="adj"><button data-a="adj" data-side="them" data-d="-1" aria-label="Subtract a point from ' + esc(S.opp) + '">−</button>' +
+        '<button data-a="adj" data-side="them" data-d="1" aria-label="Add a point to ' + esc(S.opp) + '">+</button></div>' +
+      '</div>';
+  }
+
+  const TABS = [['game', 'Game', 'play'], ['court', 'Court', 'court'], ['roster', 'Roster', 'users'], ['stats', 'Stats', 'table'], ['more', 'More', 'gear']];
+  function renderTabs() {
+    $('#tabs').innerHTML = TABS.map((t) =>
+      '<button class="tab ' + (S.tab === t[0] ? 'active' : '') + '" data-a="tab" data-tab="' + t[0] + '">' + ic(t[2]) + '<span>' + t[1] + '</span></button>'
+    ).join('');
+  }
+
+  /* ---- game view ---- */
+  function emptyRoster() {
+    return '<div class="card" style="text-align:center;padding:32px 16px">' +
+      '<h2 style="justify-content:center;font-size:20px">Add your players to start tracking</h2>' +
+      '<p class="hint" style="margin-bottom:16px">Build your roster once and it stays saved on this device.</p>' +
+      '<div class="btn-row" style="justify-content:center">' +
+      '<button class="btn" data-a="tab" data-tab="roster">' + ic('users') + ' Build roster</button>' +
+      '<button class="btn alt" data-a="sample">' + ic('wand') + ' Load sample team</button></div></div>';
+  }
+
+  function playerCard(p, rec, zone) {
+    const selected = S.selId === p.id && !U.oppMode;
+    const avg = rec.qn ? (rec.qs / rec.qn).toFixed(1) : '';
+    let quick = '';
+    if (selected) {
+      quick = '<div class="quick">' + QUICK.map((q) =>
+        '<button class="qbtn" style="background:' + QUICK_BG[q[1]] + (q[1] === 'trans' ? ';color:#3B1D00' : '') + '" data-a="stat" data-key="' + q[0] + '" data-id="' + p.id + '">' +
+        q[2] + '<b>' + rec[q[0]] + '</b></button>'
+      ).join('') + '</div>';
+    }
+    return '<div class="pcard ' + (selected ? 'selected' : '') + '">' +
+      '<button class="pcard-top" data-a="pick" data-id="' + p.id + '">' +
+        '<span class="avatar" style="background:' + avatarColor(p) + '">' + esc(initials(p.name)) +
+        (zone ? '<span class="zone-badge">' + zone + '</span>' : '') + '</span>' +
+        '<span class="pinfo"><span class="pname">' + esc(playerLabel(p)) + '</span>' +
+        '<span class="psub"><span>' + esc(p.pos) + '</span><span>' + pts(rec) + ' pts</span>' + (avg ? '<span>Q ' + avg + '</span>' : '') + '</span></span>' +
+      '</button>' + quick + '</div>';
+  }
+
+  function viewGame() {
+    if (!S.players.length) return emptyRoster();
+    const stats = compute('all');
+    const sel = player(S.selId);
+    const onCourt = [];
+    const courtIds = {};
+    // list by zone number 1..6
+    [1, 2, 3, 4, 5, 6].forEach((z) => {
+      const idx = ZONE_NUM.indexOf(z);
+      const pid = S.rotation[idx];
+      const p = pid && player(pid);
+      if (p) { onCourt.push([p, z]); courtIds[p.id] = true; }
+    });
+    const bench = S.players.filter((p) => !courtIds[p.id]);
+    let list;
+    if (onCourt.length) {
+      list = '<div class="col-title"><span>On court</span></div>' +
+        onCourt.map((x) => playerCard(x[0], stats[x[0].id], x[1])).join('') +
+        (bench.length ? '<div class="bench-label">Bench</div>' + bench.map((p) => playerCard(p, stats[p.id], 0)).join('') : '');
+    } else {
+      list = '<div class="col-title"><span>Players</span></div>' + S.players.map((p) => playerCard(p, stats[p.id], 0)).join('');
+    }
+
+    const rec = sel ? stats[sel.id] : null;
+    const oc = oppCounts();
+    const who = U.oppMode
+      ? '<div class="who"><small>Logging for</small>' + esc(S.opp) + ' – tap an action</div>'
+      : sel ? '<div class="who"><small>Logging for</small>' + esc(playerLabel(sel)) + '</div>'
+      : '<div class="who"><small>No player selected</small>Pick a player to log plays</div>';
+
+    const groups = GROUPS.map((g) => {
+      const tiles = g.keys.map((k) => {
+        const d = STATS[k];
+        const n = U.oppMode ? (oc[k] || 0) : (rec ? rec[k] : 0);
+        const dim = !U.oppMode && !sel ? ' dim' : '';
+        return '<button class="tile ' + g.id + dim + '" data-a="stat" data-key="' + k + '"><span>' + d.label +
+          (d.note ? '<span class="note">' + d.note + '</span>' : '') + '</span><span class="cnt">' + n + '</span></button>';
+      }).join('');
+      let note = '';
+      if (g.id === 'pts') note = U.oppMode ? '+1 ' + esc(S.opp) : '+1 ' + esc(S.team);
+      if (g.id === 'err') note = U.oppMode ? '+1 ' + esc(S.team) : '+1 ' + esc(S.opp);
+      return '<section class="group ' + g.id + '"><div class="group-head"><span class="dot"></span>' + g.title +
+        (note ? '<small>' + note + '</small>' : '') + '</div><div class="tiles">' + tiles + '</div></section>';
+    }).join('');
+
+    const recent = S.events.slice(-8).reverse().map((e) => {
+      const d = STATS[e.key];
+      const side = scoringSide(e);
+      const who2 = e.pid === 'opp' ? S.opp : e.pid === 'manual' ? 'Manual' : (e.pn || 'Player');
+      const what = e.pid === 'manual' ? 'Point added' : (d ? d.label : e.key);
+      const color = e.pid === 'manual' ? '#8583B5' : (d ? GROUP_DOT[d.g] : '#8583B5');
+      return '<div class="feed-row"><span class="dotc" style="background:' + color + '"></span>' +
+        '<span class="who">' + esc(who2) + '</span><span class="what">' + esc(what) + '</span>' +
+        (e.q ? '<span class="badge q' + e.q + '">' + RATING_NAME[e.q] + '</span>' : '') +
+        (side ? '<span class="badge pt-' + side + '">+1 ' + esc(side === 'us' ? S.team : S.opp) + '</span>' : '') +
+        '<span class="time">' + new Date(e.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '</span></div>';
+    }).join('');
+
+    return '<div class="game"><aside><div class="players">' + list + '</div></aside>' +
+      '<div class="controls">' +
+        '<div class="selbar">' + who +
+          '<button class="chip-btn opp ' + (U.oppMode ? 'on' : '') + '" data-a="opp">' + ic('users') + (U.oppMode ? ' Cancel' : ' Their player') + '</button>' +
+          '<button class="chip-btn dark" data-a="undo">' + ic('undo') + ' Undo</button></div>' +
+        groups +
+        '<section class="feed"><div class="col-title" style="padding:12px 14px 0"><span>Recent plays</span></div>' +
+        (recent || '<div class="empty">Plays you log will show up here.</div>') + '</section>' +
+      '</div></div>';
+  }
+
+  /* ---- court view ---- */
+  function viewCourt() {
+    const stats = compute('all');
+    const zones = S.rotation.map((pid, i) => {
+      const p = pid && player(pid);
+      const z = ZONE_NUM[i];
+      const serveBadge = i === Z1_INDEX && S.serving === 'us' ? '<span class="serve-ball">Serve</span>' : '';
+      if (p) {
+        return '<button class="zone filled" style="background:' + avatarColor(p) + '" data-a="zone" data-i="' + i + '">' +
+          '<span class="znum">Z' + z + '</span>' + serveBadge +
+          '<span class="zname">' + esc(playerLabel(p)) + '</span><span class="zpos">' + esc(p.pos) + ' · ' + pts(stats[p.id]) + ' pts</span></button>';
+      }
+      return '<button class="zone" data-a="zone" data-i="' + i + '"><span class="znum">Z' + z + '</span>' + serveBadge +
+        '<span class="zempty">' + ic('plus') + '<br>Add player</span></button>';
+    }).join('');
+    return '<div class="court-wrap">' +
+      '<div class="court"><div class="net"></div><div class="court-grid">' + zones + '</div>' +
+      '<div class="court-note">Front row on top · Zone 1 serves</div></div>' +
+      '<div class="court-actions">' +
+        '<button class="btn" data-a="rotate">' + ic('rotate') + ' Rotate clockwise</button>' +
+        '<button class="btn alt" data-a="unrotate">' + ic('rotateBack') + ' Rotate back</button>' +
+        '<button class="btn alt" data-a="autofill">' + ic('wand') + ' Fill first six</button>' +
+        '<button class="btn danger" data-a="clearCourt">' + ic('trash') + ' Clear</button></div>' +
+      '<p class="hint">' + (S.autoRotate ? 'Auto-rotate is on: the court rotates when we win the serve back.' : 'Auto-rotate is off. Turn it on under More.') + '</p></div>';
+  }
+
+  /* ---- roster view ---- */
+  function viewRoster() {
+    const rows = S.players.map((p) =>
+      '<div class="roster-row"><span class="avatar" style="background:' + avatarColor(p) + '">' + esc(initials(p.name)) + '</span>' +
+      '<div class="pinfo"><div class="pname">' + esc(playerLabel(p)) + '</div><div class="psub">' + esc(p.pos) + '</div></div>' +
+      '<button class="icon-btn" data-a="delPlayer" data-id="' + p.id + '" aria-label="Remove ' + esc(p.name) + '">' + ic('trash') + '</button></div>'
+    ).join('');
+    return '<div class="card"><h2>Add a player</h2>' +
+      '<form data-form="addPlayer"><div class="form-row">' +
+      '<input class="field grow" name="name" placeholder="Player name" autocomplete="off" required maxlength="40" aria-label="Player name">' +
+      '<input class="field num" name="num" placeholder="#" inputmode="numeric" maxlength="3" aria-label="Jersey number">' +
+      '<select class="field" name="pos" aria-label="Position">' + POSITIONS.map((p) => '<option>' + p + '</option>').join('') + '</select>' +
+      '<button class="btn green" type="submit">' + ic('plus') + ' Add</button></div></form></div>' +
+      '<div class="card"><h2><span>Squad (' + S.players.length + ')</span>' +
+      (S.players.length ? '' : '<button class="chip-btn" data-a="sample">' + ic('wand') + ' Load sample team</button>') + '</h2>' +
+      (rows || '<div class="empty">No players yet. Add your first one above.</div>') + '</div>';
+  }
+
+  /* ---- stats view ---- */
+  function viewStats() {
+    const setOpts = ['<option value="all">All sets</option>'];
+    for (let n = 1; n <= S.set; n++) setOpts.push('<option value="' + n + '"' + (String(U.statSet) === String(n) ? ' selected' : '') + '>Set ' + n + '</option>');
+    const stats = compute(U.statSet);
+    const rows = S.players.map((p) => ({ p, r: stats[p.id] }));
+    const total = sumRecords(rows.map((x) => x.r));
+    const head = '<tr><th>Player</th>' + COLS.map((c) => '<th class="g-' + c.g + '" title="' + esc(c.t) + '">' + c.h + '</th>').join('') + '</tr>';
+    const body = rows.map((x) => '<tr><td>' + esc(playerLabel(x.p)) + '</td>' +
+      COLS.map((c) => {
+        const v = c.f(x.r);
+        return '<td class="' + (c.h === 'Pts' ? 'strong' : v === null || v === 0 ? 'muted' : '') + '">' + fmtCell(c, v) + '</td>';
+      }).join('') + '</tr>').join('');
+    const foot = '<tr><td>Team</td>' + COLS.map((c) => '<td>' + fmtCell(c, c.f(total)) + '</td>').join('') + '</tr>';
+    return '<div class="stats-bar"><select class="field" data-bind="statSet" aria-label="Set filter">' + setOpts.join('') + '</select><span class="grow"></span>' +
+      '<button class="btn green" data-a="exportXlsx">' + ic('download') + ' Export Excel</button>' +
+      '<button class="btn alt" data-a="exportCsv">' + ic('download') + ' CSV</button></div>' +
+      (S.players.length
+        ? '<div class="table-wrap"><table class="st"><thead>' + head + '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></div>'
+        : '<div class="card empty">Add players and log some plays to see stats here.</div>') +
+      '<p class="legend">Hold or hover a column heading for its meaning. Hit% = (kills − attack errors) ÷ attempts. Their player is never included in these tables or the export. Excel export has Totals, one sheet per set, Scores, and a full Play log.</p>';
+  }
+
+  /* ---- more / settings ---- */
+  function toggleRow(key, title, sub) {
+    return '<div class="switch-row"><div class="t">' + title + '<small>' + sub + '</small></div>' +
+      '<button class="toggle ' + (S[key] ? 'on' : '') + '" role="switch" aria-checked="' + (S[key] ? 'true' : 'false') + '" aria-label="' + title + '" data-a="toggle" data-k="' + key + '"></button></div>';
+  }
+  function viewMore() {
+    return '<div class="card"><h2>Teams</h2>' +
+      '<label class="lbl" for="teamName">Your team</label><input id="teamName" class="field" style="width:100%;margin-bottom:12px" data-bind="team" value="' + esc(S.team) + '" maxlength="30">' +
+      '<label class="lbl" for="oppName">Opponent</label><input id="oppName" class="field" style="width:100%" data-bind="opp" value="' + esc(S.opp) + '" maxlength="30"></div>' +
+      '<div class="card"><h2>Tracking</h2>' +
+      toggleRow('askQuality', 'Rate every play', 'Pop up a 1–4 quality rating after each skill action.') +
+      toggleRow('autoRotate', 'Auto-rotate on side-out', 'Rotate the court when we win a point while the other team served.') +
+      '</div>' +
+      '<div class="card"><h2>Your data</h2><p class="hint" style="text-align:left;margin:0 0 12px">Everything is stored on this device. Save a backup before clearing your browser or switching devices.</p>' +
+      '<div class="btn-row"><button class="btn alt" data-a="backup">' + ic('save') + ' Save backup</button>' +
+      '<button class="btn alt" data-a="restore">' + ic('upload') + ' Restore backup</button></div></div>' +
+      '<div class="card"><h2>Start fresh</h2><div class="btn-row">' +
+      '<button class="btn danger" data-a="newMatch">' + ic('rotate') + ' New match (keep roster)</button>' +
+      '<button class="btn danger" data-a="resetAll">' + ic('trash') + ' Erase everything</button></div></div>' +
+      '<p class="hint">Dimed Stats · works offline once loaded</p>';
+  }
+
+  const VIEWS = { game: viewGame, court: viewCourt, roster: viewRoster, stats: viewStats, more: viewMore };
+
+  /* ------------------------------------------------------------------ export */
+  function download(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+  const fileStem = () => (S.team.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'team') + '-' + new Date().toISOString().slice(0, 10);
+
+  function statsSheet(name, setFilter) {
+    const stats = compute(setFilter);
+    const rows = [['#', 'Player', 'Pos'].concat(COLS.map((c) => c.h))];
+    S.players.forEach((p) => {
+      rows.push([p.num || null, p.name, p.pos].concat(COLS.map((c) => exportCell(c, c.f(stats[p.id])))));
+    });
+    const total = sumRecords(S.players.map((p) => stats[p.id]));
+    rows.push([null, 'Team', null].concat(COLS.map((c) => exportCell(c, c.f(total)))));
+    const cols = [{ w: 6 }, { w: 22 }, { w: 7 }].concat(COLS.map((c) => ({ w: c.h === 'Avg Q' ? 9 : 8, s: c.fmt || 'text' })));
+    return { name, rows, cols };
+  }
+
+  function buildSheets() {
+    const sheets = [statsSheet('Totals', 'all')];
+    const used = {};
+    S.events.forEach((e) => { used[e.set] = true; });
+    for (let n = 1; n <= S.set; n++) if (used[n] || n === S.set) sheets.push(statsSheet('Set ' + n, n));
+    const scores = [['Set', S.team, S.opp]];
+    for (let n = 1; n <= S.set; n++) { const s = scoreFor(n); scores.push([n, s.us, s.them]); }
+    sheets.push({ name: 'Scores', rows: scores, cols: [{ w: 6 }, { w: 20 }, { w: 20 }] });
+    const log = [['Set', 'Time', '#', 'Player', 'Pos', 'Action', 'Category', 'Quality (1-4)', 'Quality', 'Point for']];
+    S.events.forEach((e) => {
+      if (e.pid === 'opp' || e.pid === 'manual') return;   // never export their player
+      const d = STATS[e.key];
+      if (!d) return;
+      const side = scoringSide(e);
+      log.push([e.set, new Date(e.ts).toLocaleString(), e.pnum || null, e.pn, e.ppos, d.label,
+        { pts: 'Point', err: 'Error', skill: 'Skill', trans: 'Transition' }[d.g], e.q || null, e.q ? RATING_NAME[e.q] : null,
+        side ? (side === 'us' ? S.team : S.opp) : null]);
+    });
+    sheets.push({ name: 'Play log', rows: log, cols: [{ w: 6 }, { w: 22 }, { w: 6 }, { w: 22 }, { w: 7 }, { w: 20 }, { w: 12 }, { w: 13 }, { w: 10 }, { w: 18 }] });
+    return sheets;
+  }
+
+  function exportXlsx() {
+    if (!S.players.length) { toast('Add players first'); return; }
+    try {
+      download(window.DimedXLSX.build(buildSheets()), fileStem() + '.xlsx');
+      toast('Excel file saved');
+    } catch (err) { console.error(err); toast('Could not build the Excel file'); }
+  }
+
+  function exportCsv() {
+    if (!S.players.length) { toast('Add players first'); return; }
+    const sheet = statsSheet('Totals', U.statSet);
+    const q = (v) => { if (v === null || v === undefined) return ''; const s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const csv = '﻿' + sheet.rows.map((r) => r.map(q).join(',')).join('\r\n');
+    download(new Blob([csv], { type: 'text/csv;charset=utf-8' }), fileStem() + '.csv');
+    toast('CSV saved');
+  }
+
+  function backup() {
+    download(new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' }), 'dimed-backup-' + new Date().toISOString().slice(0, 10) + '.json');
+    toast('Backup saved');
+  }
+
+  /* ------------------------------------------------------------------ actions */
+  const A = {
+    tab(d) { S.tab = d.tab; U.oppMode = false; save(); render(); window.scrollTo(0, 0); },
+    pick(d) { if (U.oppMode) { toast('Tap an action for their player, or cancel'); return; } S.selId = d.id; save(); render(); },
+    opp() { U.oppMode = !U.oppMode; render(); },
+    stat(d) { tapStat(d.key, d.id || S.selId); },
+    undo() { undo(); },
+    adj(d) {
+      const side = d.side, delta = Number(d.delta || d.d);
+      if (delta > 0) {
+        const scorer = pushEvent('manual', '_pt', null, side);
+        toast('+1 ' + (scorer === 'us' ? S.team : S.opp));
+      } else {
+        if (scoreFor(S.set)[side] <= 0) return;
+        const a = S.adj[S.set] || (S.adj[S.set] = { us: 0, them: 0 });
+        a[side]--; save(); render();
+      }
+    },
+    toggleServe() { S.serving = S.serving === 'us' ? 'them' : 'us'; save(); render(); },
+    endSet() {
+      const sc = scoreFor(S.set);
+      ask('Start set ' + (S.set + 1) + '?', 'Set ' + S.set + ' is saved as ' + sc.us + '–' + sc.them + '. The scoreboard resets for the new set.', 'Start next set').then((ok) => {
+        if (!ok) return;
+        S.set++; save(); render(); toast('Set ' + S.set + ' · check who is serving');
+      });
+    },
+    backdrop(d, e, el) { if (e.target === el) closeModal(true); },
+    askYes() { const r = U.resolver; U.resolver = null; closeModal(false); if (r) r(true); },
+    askNo() { closeModal(true); },
+    rate(d) {
+      const pend = U.pending;
+      closeModal(false);
+      if (!pend) return;
+      const q = Number(d.q) || null;
+      const p = player(pend.pid);
+      if (!p) return;
+      const scorer = pushEvent(pend.pid, pend.key, q);
+      toast(p.name + ': ' + STATS[pend.key].label + (q ? ' · ' + RATING_NAME[q] : '') + (scorer ? ' · +1 ' + (scorer === 'us' ? S.team : S.opp) : ''));
+    },
+    zone(d) {
+      const i = Number(d.i);
+      U.zoneIdx = i;
+      const cur = S.rotation[i] && player(S.rotation[i]);
+      const onCourt = {};
+      S.rotation.forEach((id) => { if (id) onCourt[id] = true; });
+      const avail = S.players.filter((p) => !onCourt[p.id]);
+      if (!cur && !avail.length) { toast(S.players.length ? 'Everyone is already on court' : 'Add players in Roster first'); return; }
+      openModal('<h3>Zone ' + ZONE_NUM[i] + '</h3><p class="sub">' + (cur ? 'Swap ' + esc(cur.name) + ' with a bench player, or take them off.' : 'Choose who plays here.') + '</p>' +
+        '<div class="pick-list">' +
+        avail.map((p) => '<button class="pick" data-a="assign" data-id="' + p.id + '"><span class="avatar" style="background:' + avatarColor(p) + '">' + esc(initials(p.name)) + '</span>' +
+          '<span class="pinfo"><span class="pname">' + esc(playerLabel(p)) + '</span><span class="psub">' + esc(p.pos) + '</span></span></button>').join('') +
+        (cur ? '<button class="pick remove" data-a="unassign">' + ic('trash') + ' Take ' + esc(cur.name) + ' off the court</button>' : '') +
+        '</div>');
+    },
+    assign(d) { S.rotation[U.zoneIdx] = d.id; save(); closeModal(false); render(); },
+    unassign() { S.rotation[U.zoneIdx] = null; save(); closeModal(false); render(); },
+    rotate() {
+      if (!S.rotation.some(Boolean)) { toast('Put players on the court first'); return; }
+      rotateTeam(); save(); render(); toast('Rotated clockwise');
+    },
+    unrotate() { unrotateTeam(); save(); render(); toast('Rotated back'); },
+    autofill() {
+      S.rotation = [null, null, null, null, null, null];
+      // fill Z1..Z6 in numeric order
+      S.players.slice(0, 6).forEach((p, n) => { S.rotation[ZONE_NUM.indexOf(n + 1)] = p.id; });
+      save(); render(); toast('First six players placed');
+    },
+    clearCourt() { S.rotation = [null, null, null, null, null, null]; save(); render(); },
+    delPlayer(d) {
+      const p = player(d.id);
+      if (!p) return;
+      ask('Remove ' + p.name + '?', 'Their logged plays stay in the score and the play log, but they will no longer appear in the stat tables.', 'Remove player', true).then((ok) => {
+        if (!ok) return;
+        S.players = S.players.filter((x) => x.id !== d.id);
+        S.rotation = S.rotation.map((id) => (id === d.id ? null : id));
+        if (S.selId === d.id) S.selId = null;
+        save(); render(); toast(p.name + ' removed');
+      });
+    },
+    sample() {
+      const names = [['Alex Rivera', '1', 'S'], ['Jamie Park', '7', 'OH'], ['Morgan Lee', '11', 'MB'], ['Casey Tran', '4', 'L'],
+        ['Riley Chen', '9', 'OH'], ['Taylor Brooks', '14', 'MB'], ['Jordan Ellis', '3', 'OPP'], ['Sam Ortiz', '12', 'DS']];
+      names.forEach((n) => S.players.push({ id: uid(), name: n[0], num: n[1], pos: n[2] }));
+      save(); render(); toast('Sample team loaded');
+    },
+    toggle(d) { S[d.k] = !S[d.k]; save(); render(); },
+    exportXlsx, exportCsv, backup,
+    restore() { $('#restoreFile').click(); },
+    newMatch() {
+      ask('Start a new match?', 'This clears all logged plays and scores but keeps your roster. Export first if you want a copy.', 'Clear match', true).then((ok) => {
+        if (!ok) return;
+        S.events = []; S.adj = {}; S.set = 1; S.serving = 'us'; U.statSet = 'all'; U.oppMode = false;
+        save(); render(); toast('New match ready');
+      });
+    },
+    resetAll() {
+      ask('Erase everything?', 'Roster, plays, and settings will be deleted from this device. This cannot be undone.', 'Erase everything', true).then((ok) => {
+        if (!ok) return;
+        S = fresh(); U.statSet = 'all'; U.oppMode = false; save(); render(); toast('All data erased');
+      });
+    },
+    install() {
+      const e = U.installEvt;
+      if (!e) return;
+      e.prompt();
+      e.userChoice.finally(() => { U.installEvt = null; renderAppbar(); });
+    }
+  };
+
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-a]');
+    if (!el) return;
+    const fn = A[el.dataset.a];
+    if (fn) fn(el.dataset, e, el);
+  });
+
+  document.addEventListener('submit', (e) => {
+    const form = e.target.closest('[data-form]');
+    if (!form) return;
+    e.preventDefault();
+    if (form.dataset.form === 'addPlayer') {
+      const f = new FormData(form);
+      const name = String(f.get('name') || '').trim();
+      if (!name) return;
+      S.players.push({ id: uid(), name, num: String(f.get('num') || '').trim(), pos: String(f.get('pos') || 'OH') });
+      save(); render(); toast(name + ' added');
+      const nameField = $('input[name="name"]');
+      if (nameField) nameField.focus();
+    }
+  });
+
+  document.addEventListener('change', (e) => {
+    const t = e.target;
+    if (!t.dataset || !t.dataset.bind) return;
+    if (t.dataset.bind === 'statSet') { U.statSet = t.value; render(); return; }
+    if (t.dataset.bind === 'team' || t.dataset.bind === 'opp') {
+      S[t.dataset.bind] = t.value.trim() || (t.dataset.bind === 'team' ? 'Our team' : 'Opponent');
+      save(); render();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (U.pending && !$('#modal').hidden) {
+      if (e.key >= '1' && e.key <= '4') { e.preventDefault(); A.rate({ q: e.key }); }
+      else if (e.key === 'Escape') closeModal(true);
+    } else if (e.key === 'Escape' && !$('#modal').hidden) closeModal(true);
+  });
+
+  $('#restoreFile').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result));
+        if (!data || !Array.isArray(data.players) || !Array.isArray(data.events)) throw new Error('bad');
+        ask('Restore this backup?', 'It replaces the roster and plays currently on this device.', 'Restore', true).then((ok) => {
+          if (!ok) return;
+          S = Object.assign(fresh(), data); save(); render(); toast('Backup restored');
+        });
+      } catch (err) { toast('That file is not a Dimed backup'); }
+    };
+    reader.readAsText(file);
+  });
+
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); U.installEvt = e; renderAppbar(); });
+  window.addEventListener('appinstalled', () => { U.installEvt = null; renderAppbar(); });
+
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => { /* offline mode unavailable */ }); });
+  }
+
+  // Expose a tiny surface for automated tests.
+  window.__dimed = { get state() { return S; }, scoreFor, compute, buildSheets };
+
+  render();
+})();

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Dimed Stats</title>
+  <meta name="theme-color" content="#2A1B9E">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Dimed Stats">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="appbar">
+    <div class="brand">
+      <img class="brand-mark" src="icons/icon.svg" alt="" width="34" height="34">
+      <div class="brand-text">
+        <span class="wordmark">d<span class="i">i</span>med</span>
+        <span class="product">Stats</span>
+      </div>
+    </div>
+    <div class="appbar-right" id="appbarRight"></div>
+  </header>
+
+  <section class="scoreboard" id="scoreboard" aria-label="Scoreboard"></section>
+
+  <nav class="tabs" id="tabs" aria-label="Sections"></nav>
+
+  <main id="view" class="view"></main>
+
+  <div id="modal" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <input type="file" id="restoreFile" accept="application/json,.json" hidden>
+
+  <script src="xlsx.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

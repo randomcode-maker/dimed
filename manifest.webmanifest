@@ -1,0 +1,16 @@
+{
+  "name": "Dimed Stats",
+  "short_name": "Dimed",
+  "description": "Courtside volleyball stat tracking by Dimed",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F4F2FF",
+  "theme_color": "#2A1B9E",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
