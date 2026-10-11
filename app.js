@@ -165,7 +165,15 @@
     return fresh();
   }
   let S = load();
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } }
+  let persistAsked = false;
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ }
+    // Ask the browser not to clear this data when space runs low (once there is something to keep).
+    if (!persistAsked && S.players.length && navigator.storage && navigator.storage.persist) {
+      persistAsked = true;
+      navigator.storage.persist().catch(() => { /* not granted: data stays, just not protected */ });
+    }
+  }
 
   const U = {
     oppMode: false, pending: null, armKey: null, zoneIdx: null, resolver: null, onCancel: null, statSet: 'all', installEvt: null,
@@ -387,6 +395,7 @@
     render();
     if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) { /* ignore */ } }
     if (ended) setOverModal(ev);
+    else if (U.wait) reveal('#hitCard');
     return ended ? null : scorer;
   }
 
@@ -458,7 +467,13 @@
     }
     if (matchLocked()) return;
     // Action tapped before a player: keep it armed until a player card is tapped.
-    if (!pid || !player(pid)) { U.armKey = U.armKey === key ? null : key; render(); return; }
+    if (!pid || !player(pid)) {
+      U.armKey = U.armKey === key ? null : key; render();
+      // On a short screen the player column can run past the bottom: lift it so every court player shows.
+      const g = U.armKey && $('.g-players');
+      if (g) { const r = g.getBoundingClientRect(); if (r.top > 0 && r.bottom > window.innerHeight) window.scrollTo({ top: window.scrollY + r.top - 8, behavior: 'smooth' }); }
+      return;
+    }
     U.armKey = null;
     if (STATS[key].q && S.askQuality) { openRate(pid, key); return; }
     const p = player(pid);
@@ -485,6 +500,8 @@
 
   function openModal(html, onCancel) {
     U.onCancel = onCancel || null;
+    clearTimeout(toastTimer);
+    $('#toast').classList.remove('show');   // a leftover message must not sit on top of the sheet
     const m = $('#modal');
     m.innerHTML = '<div class="backdrop" data-a="backdrop"><div class="sheet" role="dialog" aria-modal="true">' + html + '</div></div>';
     m.hidden = false;
@@ -616,6 +633,22 @@
     const what = (STATS[e.key] ? STATS[e.key].label : e.key) + ' · ' + zoneLabel(e.land);
     return '<circle class="ld ' + outcomeOf(e.key) + (strong ? ' last' : '') + '" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) +
       '" r="' + (strong ? 8 : 6.5) + '"><title>' + esc((e.pn ? e.pn + ' · ' : '') + what) + '</title></circle>';
+  }
+
+  /* Bring the next control on screen when a phone layout has scrolled it away: the court after
+   * a play that is waiting for its landing zone, and the action buttons after a zone tap. */
+  function reveal(sel) {
+    const el = $(sel);
+    if (!el || !$('#modal').hidden) return;
+    const r = el.getBoundingClientRect();
+    const tabs = $('#tabs').getBoundingClientRect();
+    const fixedTabs = getComputedStyle($('#tabs')).position === 'fixed';
+    const strip = $('.game.arming .g-players');
+    const top = strip && getComputedStyle(strip).position === 'sticky' ? strip.getBoundingClientRect().bottom : 0;
+    const bottom = fixedTabs ? tabs.top : window.innerHeight;
+    if (r.top >= top && r.top + Math.min(r.height, bottom - top) <= bottom) return;
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: Math.max(0, window.scrollY + r.top - top - 8), behavior: reduce ? 'auto' : 'smooth' });
   }
 
   function updateHitCard() {
@@ -823,13 +856,20 @@
     }
     const sub = subBtn ? '<button class="sub-btn' + (zone ? ' out' : '') + '" data-a="sub" data-id="' + p.id + '" aria-label="' + (zone ? 'Sub ' + esc(p.name) + ' out' : 'Sub ' + esc(p.name) + ' in') + '">' +
       ic('swap') + '<span>' + (zone ? 'Out' : 'In') + '</span></button>' : '';
-    return '<div class="pcard ' + (selected ? 'selected' : '') + '"><div class="pcard-row">' +
+    return '<div class="pcard' + (selected ? ' selected' : '') + (zone ? '' : ' bench') + '"><div class="pcard-row">' +
       '<button class="pcard-top" data-a="pick" data-id="' + p.id + '">' +
         '<span class="avatar" style="background:' + avatarColor(p) + '">' + esc(initials(p.name)) +
         (zone ? '<span class="zone-badge">' + zone + '</span>' : '') + '</span>' +
-        '<span class="pinfo"><span class="pname">' + esc(playerLabel(p)) + '</span>' +
+        '<span class="pinfo"><span class="pname">' + cardName(p) + '</span>' +
         '<span class="psub"><span>' + esc(p.pos) + '</span><span>' + pts(rec) + ' pts</span>' + (avg ? '<span>Q ' + avg + '</span>' : '') + '</span></span>' +
       '</button>' + sub + '</div>' + quick + '</div>';
+  }
+
+  // "#7 Jamie Park", with the last name in its own span so phones can drop it to fit.
+  function cardName(p) {
+    const parts = p.name.trim().split(/\s+/);
+    const rest = parts.slice(1).join(' ');
+    return (p.num ? '#' + esc(p.num) + ' ' : '') + esc(parts[0]) + (rest ? '<span class="pn-rest"> ' + esc(rest) + '</span>' : '');
   }
 
   // Shown on the Game screen while the court is empty, e.g. at the start of every set.
@@ -878,7 +918,7 @@
         '<button class="chip-btn" data-a="unpick" title="Tap an action first, then pick the player">Clear</button>'
       : '<div class="who"><small>No player selected</small>Tap an action, then pick who made it</div>';
 
-    const groups = GROUPS.map((g) => {
+    const groupHtml = (g) => {
       const tiles = g.keys.map((k) => {
         const d = STATS[k];
         const n = U.oppMode ? (oc[k] || 0) : (rec ? rec[k] : 0);
@@ -890,7 +930,10 @@
       if (g.id === 'err') note = U.oppMode ? '+1 ' + esc(S.team) : '+1 ' + esc(S.opp);
       return '<section class="group ' + g.id + '"><div class="group-head"><span class="dot"></span>' + g.title +
         (note ? '<small>' + note + '</small>' : '') + '</div><div class="tiles">' + tiles + '</div></section>';
-    }).join('');
+    };
+    // Points and errors end the rally, so they sit above the court; skills and transition go below.
+    const mainGroups = GROUPS.filter((g) => g.id === 'pts' || g.id === 'err').map(groupHtml).join('');
+    const moreGroups = GROUPS.filter((g) => g.id !== 'pts' && g.id !== 'err').map(groupHtml).join('');
 
     const recent = S.events.slice(-8).reverse().map((e) => {
       const d = STATS[e.key];
@@ -909,12 +952,13 @@
     return '<div class="game' + (S.trackHits ? '' : ' nohit') + (arm ? ' arming' : '') + '">' +
       '<aside class="g-players">' +
         (arm ? '<div class="arm-bar"><span><b>' + esc(arm.label) + '</b> · tap who made it</span><button class="chip-btn" data-a="unpick">Cancel</button></div>' : '') +
-        '<div class="players">' + list + '</div></aside>' +
-      '<div class="g-sel"><div class="selbar">' + who +
+        '<div class="players' + (onCourt.length ? ' has-court' : '') + '">' + list + '</div></aside>' +
+      '<div class="g-sel"><div class="selbar' + (U.oppMode || arm || sel ? '' : ' idle') + '">' + who +
         '<button class="chip-btn opp ' + (U.oppMode ? 'on' : '') + '" data-a="opp">' + ic('users') + (U.oppMode ? ' Cancel' : ' Their player') + '</button>' +
         '<button class="chip-btn dark" data-a="undo">' + ic('undo') + ' Undo</button></div></div>' +
+      '<div class="g-main controls">' + mainGroups + '</div>' +
       (S.trackHits ? '<div class="g-hit">' + hitCardHtml() + '</div>' : '') +
-      '<div class="g-controls controls">' + groups +
+      '<div class="g-controls controls">' + moreGroups +
         (S.showInsights ? insightsHtml() : '') +
         '<section class="feed"><div class="col-title" style="padding:12px 14px 0"><span>Recent plays</span></div>' +
         (recent || '<div class="empty">Plays you log will show up here.</div>') + '</section>' +
@@ -974,7 +1018,7 @@
     const stats = compute(U.statSet);
     const rows = S.players.map((p) => ({ p, r: stats[p.id] }));
     const total = sumRecords(rows.map((x) => x.r));
-    const head = '<tr><th>Player</th>' + COLS.map((c) => '<th class="g-' + c.g + '" title="' + esc(c.t) + '">' + c.h + '</th>').join('') + '</tr>';
+    const head = '<tr><th>Player</th>' + COLS.map((c) => '<th class="g-' + c.g + '" title="' + esc(c.t) + '" data-a="colInfo" data-t="' + esc(c.h + ': ' + c.t) + '">' + c.h + '</th>').join('') + '</tr>';
     const body = rows.map((x) => '<tr><td>' + esc(playerLabel(x.p)) + '</td>' +
       COLS.map((c) => {
         const v = c.f(x.r);
@@ -992,7 +1036,7 @@
       (S.players.length
         ? '<div class="table-wrap"><table class="st"><thead>' + head + '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></div>'
         : '<div class="card empty">Add players and log some plays to see stats here.</div>') +
-      '<p class="legend">Hold or hover a column heading for its meaning. Att includes transition hits. Hit% = (kills − attack errors) ÷ attempts. Their player is never included in these tables or the export. Excel export has Totals, one sheet per set, Scores, a Landings sheet, and a full Play log.</p>';
+      '<p class="legend">Tap a column heading for its meaning. Att includes transition hits. Hit% = (kills − attack errors) ÷ attempts. Their player is never included in these tables or the export. Excel export has Totals, one sheet per set, Scores, a Landings sheet, and a full Play log.</p>';
   }
 
   /* ---- hit map ---- */
@@ -1082,6 +1126,7 @@
       '<div class="seg">' + [3, 5].map((n) => '<button class="' + (S.bestOf === n ? 'on' : '') + '" data-a="bestOf" data-n="' + n + '">Best of ' + n + '</button>').join('') + '</div></div>' +
       '</div>' +
       '<div class="card"><h2>Your data</h2><p class="hint" style="text-align:left;margin:0 0 12px">Everything is stored on this device. Save a backup before clearing your browser or switching devices.</p>' +
+      (IS_IOS && !STANDALONE ? '<p class="hint" style="text-align:left;margin:0 0 12px"><b>On iPhone or iPad, add Dimed to your Home Screen</b> (Share, then Add to Home Screen). Safari can clear data for sites you have not opened in 7 days; the Home Screen app keeps it.</p>' : '') +
       '<div class="btn-row"><button class="btn alt" data-a="backup">' + ic('save') + ' Save backup</button>' +
       '<button class="btn alt" data-a="restore">' + ic('upload') + ' Restore backup</button></div></div>' +
       '<div class="card"><h2>Start fresh</h2><div class="btn-row">' +
@@ -1093,7 +1138,20 @@
   const VIEWS = { game: viewGame, court: viewCourt, roster: viewRoster, stats: viewStats, more: viewMore };
 
   /* ------------------------------------------------------------------ export */
+  const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const STANDALONE = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
   function download(blob, filename) {
+    // On iPhone and iPad a download link is unreliable (above all in the Home Screen app); the share sheet can save to Files.
+    if (IS_IOS && navigator.canShare && typeof File === 'function') {
+      const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+      if (navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file] }).catch((err) => { if (!err || err.name !== 'AbortError') linkDownload(blob, filename); });
+        return;
+      }
+    }
+    linkDownload(blob, filename);
+  }
+  function linkDownload(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = filename;
@@ -1211,16 +1269,19 @@
         clearWait();
         save(); render();
         toast(w.pn + ': ' + STATS[w.key].label + ' · ' + zoneLabel(l));
+        reveal('.g-main');
       } else if (U.land && U.land.z === l.z) {
         U.land = null;   // tapping the chosen zone again clears it
         updateHitCard();
       } else {
         U.land = l;
         updateHitCard();
+        reveal('.g-main');
       }
       if (navigator.vibrate) { try { navigator.vibrate(8); } catch (err) { /* ignore */ } }
     },
     hitSkip() { clearWait(); updateHitCard(); },
+    colInfo(d) { toast(d.t); },
     hitClear() { U.land = null; updateHitCard(); },
     statView(d) { U.statView = d.v === 'hits' ? 'hits' : 'table'; render(); },
     hitMode(d) { U.hitMode = d.m === 'zones' ? 'zones' : 'dots'; render(); },
