@@ -72,6 +72,32 @@
     { q: 1, name: 'Poor',    hint: 'Weak or forced' }
   ];
   const RATING_NAME = { 4: 'Perfect', 3: 'Good', 2: 'OK', 1: 'Poor' };
+  // What each rating means for each rated action, listed 4 (Perfect) down to 1 (Poor).
+  // Actions without an entry fall back to the generic hints in RATINGS.
+  const ATTACK_HINTS = ['Forced an overpass or a free ball back', 'Tough swing, they dug it out of system',
+    'Kept in play, they set up an attack', 'Blocked back to us or an easy dig'];
+  const DIG_HINTS = ['Right to the setter, every option open', 'Up and settable, hitters had a swing',
+    'Kept alive, only a high ball or free ball', 'Barely up, overpass or off the court'];
+  const SET_HINTS = ['Perfect spot and tempo, beat the block', 'Hittable, hitter got a full swing',
+    'Off the net or tight, hitter had to adjust', 'Unhittable, had to tip or free-ball it'];
+  const RATING_HINTS = {
+    attack: ATTACK_HINTS,
+    transHit: ATTACK_HINTS,
+    serve: ['Overpass or free ball, no attack back', 'Pass off the net, one hitter option',
+      'Decent pass, setter had two options', 'Perfect pass, they ran their full offense'],
+    recPass: ['On target, setter could run every hitter', 'Off target, setter still had 2+ options',
+      'Out of system, one high ball to the outside', 'Overpass or free ball back to them'],
+    dig: DIG_HINTS,
+    transDig: DIG_HINTS,
+    set: SET_HINTS,
+    assist: SET_HINTS,
+    transSet: SET_HINTS,
+    blockAss: ['Closed the seam, stuffed it straight down', 'Good hands, helped seal the net',
+      'Late but got a piece of it', 'Partner did the work'],
+    transBlock: ['Big touch, we dug it and countered', 'Slowed it down, easy ball for us',
+      'Light touch, we had to scramble', 'Touch hurt us, deflected wide or tooled']
+  };
+  const ratingHint = (key, r) => (RATING_HINTS[key] ? RATING_HINTS[key][4 - r.q] : r.hint);
   const POSITIONS = ['OH', 'MB', 'S', 'OPP', 'L', 'DS', 'RS'];
   const AVATAR_COLORS = ['#2563EB', '#DB2777', '#16A34A', '#D97706', '#0891B2', '#7C3AED', '#DC2626', '#0D9488'];
   const GROUP_DOT = { pts: '#22C55E', err: '#EF4444', skill: '#94A3B8', trans: '#3B82F6' };
@@ -536,7 +562,7 @@
       '<p class="sub">' + esc(playerLabel(p)) + ' · tap a rating, or tap outside to cancel' +
       (S.trackHits && LAND_KEYS[key] && U.land ? '<span class="spot-ok">' + ic('pin') + ' Landing spot saved</span>' : '') + '</p>' +
       '<div class="rate-grid">' +
-      RATINGS.map((r) => '<button class="rate r' + r.q + '" data-a="rate" data-q="' + r.q + '"><kbd>' + r.q + '</kbd>' + r.name + '<small>' + r.hint + '</small></button>').join('') +
+      RATINGS.map((r) => '<button class="rate r' + r.q + '" data-a="rate" data-q="' + r.q + '"><kbd>' + r.q + '</kbd>' + r.name + '<small>' + ratingHint(key, r) + '</small></button>').join('') +
       '</div><button class="skip" data-a="rate" data-q="0">Log without a rating</button>'
     );
     // Keep U.pending alive through openModal (it only clears on close).
@@ -952,7 +978,7 @@
     return '<div class="game' + (S.trackHits ? '' : ' nohit') + (arm ? ' arming' : '') + '">' +
       '<aside class="g-players">' +
         (arm ? '<div class="arm-bar"><span><b>' + esc(arm.label) + '</b> · tap who made it</span><button class="chip-btn" data-a="unpick">Cancel</button></div>' : '') +
-        '<div class="players' + (onCourt.length ? ' has-court' : '') + '">' + list + '</div></aside>' +
+        '<div class="players' + (onCourt.length ? ' has-court' : '') + (onCourt.length === 6 ? ' full' : '') + '">' + list + '</div></aside>' +
       '<div class="g-sel"><div class="selbar' + (U.oppMode || arm || sel ? '' : ' idle') + '">' + who +
         '<button class="chip-btn opp ' + (U.oppMode ? 'on' : '') + '" data-a="opp">' + ic('users') + (U.oppMode ? ' Cancel' : ' Their player') + '</button>' +
         '<button class="chip-btn dark" data-a="undo">' + ic('undo') + ' Undo</button></div></div>' +
