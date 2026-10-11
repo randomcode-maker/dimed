@@ -840,7 +840,7 @@
     }
     const sub = subBtn ? '<button class="sub-btn' + (zone ? ' out' : '') + '" data-a="sub" data-id="' + p.id + '" aria-label="' + (zone ? 'Sub ' + esc(p.name) + ' out' : 'Sub ' + esc(p.name) + ' in') + '">' +
       ic('swap') + '<span>' + (zone ? 'Out' : 'In') + '</span></button>' : '';
-    return '<div class="pcard ' + (selected ? 'selected' : '') + '"><div class="pcard-row">' +
+    return '<div class="pcard' + (selected ? ' selected' : '') + (zone ? '' : ' bench') + '"><div class="pcard-row">' +
       '<button class="pcard-top" data-a="pick" data-id="' + p.id + '">' +
         '<span class="avatar" style="background:' + avatarColor(p) + '">' + esc(initials(p.name)) +
         (zone ? '<span class="zone-badge">' + zone + '</span>' : '') + '</span>' +
@@ -926,7 +926,7 @@
     return '<div class="game' + (S.trackHits ? '' : ' nohit') + (arm ? ' arming' : '') + '">' +
       '<aside class="g-players">' +
         (arm ? '<div class="arm-bar"><span><b>' + esc(arm.label) + '</b> · tap who made it</span><button class="chip-btn" data-a="unpick">Cancel</button></div>' : '') +
-        '<div class="players">' + list + '</div></aside>' +
+        '<div class="players' + (onCourt.length === 6 ? ' full' : '') + '">' + list + '</div></aside>' +
       '<div class="g-sel"><div class="selbar">' + who +
         '<button class="chip-btn opp ' + (U.oppMode ? 'on' : '') + '" data-a="opp">' + ic('users') + (U.oppMode ? ' Cancel' : ' Their player') + '</button>' +
         '<button class="chip-btn dark" data-a="undo">' + ic('undo') + ' Undo</button></div></div>' +

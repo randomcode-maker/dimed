@@ -576,6 +576,10 @@ table.st { border-collapse: separate; border-spacing: 0; width: 100%; font-size:
   .hit-stats { grid-template-columns: repeat(2, 1fr); }
   .lg-note { display: none; }
 }
+/* phone held upright: once all six are on court, the strip shows just them (sub via Out) */
+@media (max-width: 760px) and (orientation: portrait) {
+  .players.full .bench-label, .players.full .pcard.bench { display: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
