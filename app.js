@@ -164,28 +164,47 @@
     tab: 'game', selId: null
   });
 
+  // Fill in or repair fields so saved data and restored backups can't break the screens.
+  function normalize(data) {
+    const s = Object.assign(fresh(), data);
+    if (!Array.isArray(s.players)) s.players = [];
+    if (!Array.isArray(s.events)) s.events = [];
+    if (!Array.isArray(s.rotation) || s.rotation.length !== 6) s.rotation = [null, null, null, null, null, null];
+    if (!Array.isArray(s.subs)) s.subs = [];
+    if (!s.starts || typeof s.starts !== 'object') s.starts = {};
+    if (!s.adj || typeof s.adj !== 'object') s.adj = {};
+    if (s.lastLineup && (!Array.isArray(s.lastLineup) || s.lastLineup.length !== 6)) s.lastLineup = null;
+    if (!(Number(s.set) >= 1)) s.set = 1;
+    s.set = Math.floor(Number(s.set));
+    if (s.bestOf !== 3 && s.bestOf !== 5) s.bestOf = 5;
+    if (s.serving !== 'us' && s.serving !== 'them') s.serving = 'us';
+    if (!VIEWS_KEYS.includes(s.tab)) s.tab = 'game';
+    return s;
+  }
+  const VIEWS_KEYS = ['game', 'court', 'roster', 'stats', 'more'];
+
   function load() {
-    const base = fresh();
     try {
       const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const s = Object.assign(base, JSON.parse(raw));
-        if (!Array.isArray(s.rotation) || s.rotation.length !== 6) s.rotation = [null, null, null, null, null, null];
-        if (!Array.isArray(s.subs)) s.subs = [];
-        if (!s.starts || typeof s.starts !== 'object') s.starts = {};
-        return s;
-      }
+      if (raw) return normalize(JSON.parse(raw));
     } catch (e) { /* storage unavailable: run in memory */ }
-    return base;
+    return fresh();
   }
   let S = load();
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } }
+  let persistAsked = false;
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ }
+    // Ask the browser not to clear this data when space runs low (once there is something to keep).
+    if (!persistAsked && S.players.length && navigator.storage && navigator.storage.persist) {
+      persistAsked = true;
+      navigator.storage.persist().catch(() => { /* not granted: data stays, just not protected */ });
+    }
+  }
 
   const U = {
     oppMode: false, pending: null, armKey: null, zoneIdx: null, resolver: null, onCancel: null, statSet: 'all', installEvt: null,
     land: null,            // landing spot tapped before the play is logged
     wait: null,            // { id } play just logged that is waiting for its landing spot
-    waitTimer: null,
     subId: null,           // bench player being subbed in, while the zone sheet is open
     statView: 'table', hitMode: 'dots', hitPlayer: 'all', hitResult: 'all'
   };
@@ -200,7 +219,7 @@
 
   /* ------------------------------------------------------------------ derived data */
   function scoringSide(ev) {
-    if (ev.pid === 'manual') return ev.side || null;
+    if (ev.pid === 'manual') return ev.key === '_pt' || !ev.key ? ev.side || null : null;
     const d = STATS[ev.key];
     if (!d || !d.score) return null;
     if (ev.pid === 'opp') return d.score === 'us' ? 'them' : 'us';
@@ -211,10 +230,11 @@
     let us = 0, them = 0;
     for (const e of S.events) {
       if (e.set !== setN) continue;
+      if (e.key === '_minus') { if (e.side === 'us') us--; else them--; continue; }
       const side = scoringSide(e);
       if (side === 'us') us++; else if (side === 'them') them++;
     }
-    const a = S.adj[setN] || { us: 0, them: 0 };
+    const a = S.adj[setN] || { us: 0, them: 0 };   // corrections saved by older versions
     return { us: clamp0(us + a.us), them: clamp0(them + a.them) };
   }
 
@@ -366,15 +386,11 @@
     return rotated;
   }
 
-  /* Landing spots: tap the court first (U.land) and the next hit-type play takes it, or log the
-   * play first and tap the court within WAIT_MS to add it to that play. */
-  const WAIT_MS = 20000;
-  function clearWait() { U.wait = null; clearTimeout(U.waitTimer); U.waitTimer = null; }
-  function startWait(id) {
-    clearWait();
-    U.wait = { id };
-    U.waitTimer = setTimeout(() => { U.wait = null; updateHitCard(); }, WAIT_MS);
-  }
+  /* Landing spots: tap the court first (U.land) and the next hit-type play in the same rally takes
+   * it, or log the play first and tap the court before the next play to add it to that play.
+   * A spot never carries over into the next rally. */
+  function clearWait() { U.wait = null; }
+  function startWait(id) { U.wait = { id }; }
   // Called when a play is about to be logged. Returns the pending landing (or null) and clears it.
   function takeLand(key, isOpp) {
     if (!S.trackHits || !LAND_KEYS[key]) return null;
@@ -399,11 +415,13 @@
     if (ended) endSet(ev, ended);
     if (p) S.selId = null;   // a pick lasts one play, so the next action can be tapped first
     clearWait();
+    if (scorer) U.land = null;   // the rally is over: a spot nobody used belongs to no later play
     if (!ev.land && p && S.trackHits && LAND_KEYS[key]) startWait(ev.id);
     save();
     render();
     if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) { /* ignore */ } }
     if (ended) setOverModal(ev);
+    else if (U.wait) reveal('#hitCard');
     return ended ? null : scorer;
   }
 
@@ -459,7 +477,7 @@
   }
 
   function describe(ev) {
-    if (ev.pid === 'manual') return 'Manual point';
+    if (ev.pid === 'manual') return ev.key === '_set' ? 'Set ' + ev.set + ' ended' : ev.key === '_minus' ? 'Point taken off' : 'Manual point';
     const who = ev.pid === 'opp' ? S.opp : (ev.pn || 'Player');
     return who + ' – ' + (STATS[ev.key] ? STATS[ev.key].label : ev.key);
   }
@@ -475,7 +493,13 @@
     }
     if (matchLocked()) return;
     // Action tapped before a player: keep it armed until a player card is tapped.
-    if (!pid || !player(pid)) { U.armKey = U.armKey === key ? null : key; render(); return; }
+    if (!pid || !player(pid)) {
+      U.armKey = U.armKey === key ? null : key; render();
+      // On a short screen the player column can run past the bottom: lift it so every court player shows.
+      const g = U.armKey && $('.g-players');
+      if (g) { const r = g.getBoundingClientRect(); if (r.top > 0 && r.bottom > window.innerHeight) window.scrollTo({ top: window.scrollY + r.top - 8, behavior: 'smooth' }); }
+      return;
+    }
     U.armKey = null;
     if (STATS[key].q && S.askQuality) { openRate(pid, key); return; }
     const p = player(pid);
@@ -502,6 +526,8 @@
 
   function openModal(html, onCancel) {
     U.onCancel = onCancel || null;
+    clearTimeout(toastTimer);
+    $('#toast').classList.remove('show');   // a leftover message must not sit on top of the sheet
     const m = $('#modal');
     m.innerHTML = '<div class="backdrop" data-a="backdrop"><div class="sheet" role="dialog" aria-modal="true">' + html + '</div></div>';
     m.hidden = false;
@@ -633,6 +659,22 @@
     const what = (STATS[e.key] ? STATS[e.key].label : e.key) + ' · ' + zoneLabel(e.land);
     return '<circle class="ld ' + outcomeOf(e.key) + (strong ? ' last' : '') + '" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) +
       '" r="' + (strong ? 8 : 6.5) + '"><title>' + esc((e.pn ? e.pn + ' · ' : '') + what) + '</title></circle>';
+  }
+
+  /* Bring the next control on screen when a phone layout has scrolled it away: the court after
+   * a play that is waiting for its landing zone, and the action buttons after a zone tap. */
+  function reveal(sel) {
+    const el = $(sel);
+    if (!el || !$('#modal').hidden) return;
+    const r = el.getBoundingClientRect();
+    const tabs = $('#tabs').getBoundingClientRect();
+    const fixedTabs = getComputedStyle($('#tabs')).position === 'fixed';
+    const strip = $('.game.arming .g-players');
+    const top = strip && getComputedStyle(strip).position === 'sticky' ? strip.getBoundingClientRect().bottom : 0;
+    const bottom = fixedTabs ? tabs.top : window.innerHeight;
+    if (r.top >= top && r.top + Math.min(r.height, bottom - top) <= bottom) return;
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: Math.max(0, window.scrollY + r.top - top - 8), behavior: reduce ? 'auto' : 'smooth' });
   }
 
   function updateHitCard() {
@@ -844,9 +886,16 @@
       '<button class="pcard-top" data-a="pick" data-id="' + p.id + '">' +
         '<span class="avatar" style="background:' + avatarColor(p) + '">' + esc(initials(p.name)) +
         (zone ? '<span class="zone-badge">' + zone + '</span>' : '') + '</span>' +
-        '<span class="pinfo"><span class="pname">' + esc(playerLabel(p)) + '</span>' +
+        '<span class="pinfo"><span class="pname">' + cardName(p) + '</span>' +
         '<span class="psub"><span>' + esc(p.pos) + '</span><span>' + pts(rec) + ' pts</span>' + (avg ? '<span>Q ' + avg + '</span>' : '') + '</span></span>' +
       '</button>' + sub + '</div>' + quick + '</div>';
+  }
+
+  // "#7 Jamie Park", with the last name in its own span so phones can drop it to fit.
+  function cardName(p) {
+    const parts = p.name.trim().split(/\s+/);
+    const rest = parts.slice(1).join(' ');
+    return (p.num ? '#' + esc(p.num) + ' ' : '') + esc(parts[0]) + (rest ? '<span class="pn-rest"> ' + esc(rest) + '</span>' : '');
   }
 
   // Shown on the Game screen while the court is empty, e.g. at the start of every set.
@@ -895,7 +944,7 @@
         '<button class="chip-btn" data-a="unpick" title="Tap an action first, then pick the player">Clear</button>'
       : '<div class="who"><small>No player selected</small>Tap an action, then pick who made it</div>';
 
-    const groups = GROUPS.map((g) => {
+    const groupHtml = (g) => {
       const tiles = g.keys.map((k) => {
         const d = STATS[k];
         const n = U.oppMode ? (oc[k] || 0) : (rec ? rec[k] : 0);
@@ -907,13 +956,16 @@
       if (g.id === 'err') note = U.oppMode ? '+1 ' + esc(S.team) : '+1 ' + esc(S.opp);
       return '<section class="group ' + g.id + '"><div class="group-head"><span class="dot"></span>' + g.title +
         (note ? '<small>' + note + '</small>' : '') + '</div><div class="tiles">' + tiles + '</div></section>';
-    }).join('');
+    };
+    // Points and errors end the rally, so they sit above the court; skills and transition go below.
+    const mainGroups = GROUPS.filter((g) => g.id === 'pts' || g.id === 'err').map(groupHtml).join('');
+    const moreGroups = GROUPS.filter((g) => g.id !== 'pts' && g.id !== 'err').map(groupHtml).join('');
 
     const recent = S.events.slice(-8).reverse().map((e) => {
       const d = STATS[e.key];
       const side = scoringSide(e);
       const who2 = e.pid === 'opp' ? S.opp : e.pid === 'manual' ? 'Manual' : (e.pn || 'Player');
-      const what = e.pid === 'manual' ? 'Point added' : (d ? d.label : e.key);
+      const what = e.pid === 'manual' ? (e.key === '_set' ? 'Set ' + e.set + ' ended' : e.key === '_minus' ? 'Point taken off' : 'Point added') : (d ? d.label : e.key);
       const color = e.pid === 'manual' ? '#64748B' : (d ? GROUP_DOT[d.g] : '#64748B');
       return '<div class="feed-row"><span class="dotc" style="background:' + color + '"></span>' +
         '<span class="who">' + esc(who2) + '</span><span class="what">' + esc(what) + '</span>' +
@@ -926,12 +978,13 @@
     return '<div class="game' + (S.trackHits ? '' : ' nohit') + (arm ? ' arming' : '') + '">' +
       '<aside class="g-players">' +
         (arm ? '<div class="arm-bar"><span><b>' + esc(arm.label) + '</b> · tap who made it</span><button class="chip-btn" data-a="unpick">Cancel</button></div>' : '') +
-        '<div class="players' + (onCourt.length === 6 ? ' full' : '') + '">' + list + '</div></aside>' +
-      '<div class="g-sel"><div class="selbar">' + who +
+        '<div class="players' + (onCourt.length ? ' has-court' : '') + (onCourt.length === 6 ? ' full' : '') + '">' + list + '</div></aside>' +
+      '<div class="g-sel"><div class="selbar' + (U.oppMode || arm || sel ? '' : ' idle') + '">' + who +
         '<button class="chip-btn opp ' + (U.oppMode ? 'on' : '') + '" data-a="opp">' + ic('users') + (U.oppMode ? ' Cancel' : ' Their player') + '</button>' +
         '<button class="chip-btn dark" data-a="undo">' + ic('undo') + ' Undo</button></div></div>' +
+      '<div class="g-main controls">' + mainGroups + '</div>' +
       (S.trackHits ? '<div class="g-hit">' + hitCardHtml() + '</div>' : '') +
-      '<div class="g-controls controls">' + groups +
+      '<div class="g-controls controls">' + moreGroups +
         (S.showInsights ? insightsHtml() : '') +
         '<section class="feed"><div class="col-title" style="padding:12px 14px 0"><span>Recent plays</span></div>' +
         (recent || '<div class="empty">Plays you log will show up here.</div>') + '</section>' +
@@ -991,7 +1044,7 @@
     const stats = compute(U.statSet);
     const rows = S.players.map((p) => ({ p, r: stats[p.id] }));
     const total = sumRecords(rows.map((x) => x.r));
-    const head = '<tr><th>Player</th>' + COLS.map((c) => '<th class="g-' + c.g + '" title="' + esc(c.t) + '">' + c.h + '</th>').join('') + '</tr>';
+    const head = '<tr><th>Player</th>' + COLS.map((c) => '<th class="g-' + c.g + '" title="' + esc(c.t) + '" data-a="colInfo" data-t="' + esc(c.h + ': ' + c.t) + '">' + c.h + '</th>').join('') + '</tr>';
     const body = rows.map((x) => '<tr><td>' + esc(playerLabel(x.p)) + '</td>' +
       COLS.map((c) => {
         const v = c.f(x.r);
@@ -1009,7 +1062,7 @@
       (S.players.length
         ? '<div class="table-wrap"><table class="st"><thead>' + head + '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></div>'
         : '<div class="card empty">Add players and log some plays to see stats here.</div>') +
-      '<p class="legend">Hold or hover a column heading for its meaning. Att includes transition hits. Hit% = (kills − attack errors) ÷ attempts. Their player is never included in these tables or the export. Excel export has Totals, one sheet per set, Scores, a Landings sheet, and a full Play log.</p>';
+      '<p class="legend">Tap a column heading for its meaning. Att includes transition hits. Hit% = (kills − attack errors) ÷ attempts. Their player is never included in these tables or the export. Excel export has Totals, one sheet per set, Scores, a Landings sheet, and a full Play log.</p>';
   }
 
   /* ---- hit map ---- */
@@ -1099,6 +1152,7 @@
       '<div class="seg">' + [3, 5].map((n) => '<button class="' + (S.bestOf === n ? 'on' : '') + '" data-a="bestOf" data-n="' + n + '">Best of ' + n + '</button>').join('') + '</div></div>' +
       '</div>' +
       '<div class="card"><h2>Your data</h2><p class="hint" style="text-align:left;margin:0 0 12px">Everything is stored on this device. Save a backup before clearing your browser or switching devices.</p>' +
+      (IS_IOS && !STANDALONE ? '<p class="hint" style="text-align:left;margin:0 0 12px"><b>On iPhone or iPad, add Dimed to your Home Screen</b> (Share, then Add to Home Screen). Safari can clear data for sites you have not opened in 7 days; the Home Screen app keeps it.</p>' : '') +
       '<div class="btn-row"><button class="btn alt" data-a="backup">' + ic('save') + ' Save backup</button>' +
       '<button class="btn alt" data-a="restore">' + ic('upload') + ' Restore backup</button></div></div>' +
       '<div class="card"><h2>Start fresh</h2><div class="btn-row">' +
@@ -1110,20 +1164,35 @@
   const VIEWS = { game: viewGame, court: viewCourt, roster: viewRoster, stats: viewStats, more: viewMore };
 
   /* ------------------------------------------------------------------ export */
+  const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const STANDALONE = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
   function download(blob, filename) {
+    // On iPhone and iPad a download link is unreliable (above all in the Home Screen app); the share sheet can save to Files.
+    if (IS_IOS && navigator.canShare && typeof File === 'function') {
+      const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+      if (navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file] }).catch((err) => { if (!err || err.name !== 'AbortError') linkDownload(blob, filename); });
+        return;
+      }
+    }
+    linkDownload(blob, filename);
+  }
+  function linkDownload(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
   }
+  // Jersey numbers go out as numbers so Excel doesn't flag them; "07" keeps its zero as text.
+  const jersey = (v) => (v && /^[1-9]\d*$/.test(v) ? Number(v) : v || null);
   const fileStem = () => (S.team.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'team') + '-' + new Date().toISOString().slice(0, 10);
 
   function statsSheet(name, setFilter) {
     const stats = compute(setFilter);
     const rows = [['#', 'Player', 'Pos'].concat(COLS.map((c) => c.h))];
     S.players.forEach((p) => {
-      rows.push([p.num || null, p.name, p.pos].concat(COLS.map((c) => exportCell(c, c.f(stats[p.id])))));
+      rows.push([jersey(p.num), p.name, p.pos].concat(COLS.map((c) => exportCell(c, c.f(stats[p.id])))));
     });
     const total = sumRecords(S.players.map((p) => stats[p.id]));
     rows.push([null, 'Team', null].concat(COLS.map((c) => exportCell(c, c.f(total)))));
@@ -1145,7 +1214,7 @@
       const d = STATS[e.key];
       if (!d) return;
       const side = scoringSide(e);
-      log.push([e.set, new Date(e.ts).toLocaleString(), e.pnum || null, e.pn, e.ppos, d.label,
+      log.push([e.set, new Date(e.ts).toLocaleString(), jersey(e.pnum), e.pn, e.ppos, d.label,
         { pts: 'Point', err: 'Error', skill: 'Skill', trans: 'Transition' }[d.g], e.q || null, e.q ? RATING_NAME[e.q] : null,
         side ? (side === 'us' ? S.team : S.opp) : null,
         e.land ? zoneLabel(e.land) : null, e.land && e.land.z === undefined ? Math.round(e.land.u * 18 * 10) / 10 : null, e.land && e.land.z === undefined ? Math.round(e.land.v * 9 * 10) / 10 : null]);
@@ -1159,7 +1228,7 @@
       const line = (p, list) => {
         const c = { t1: 0, t2: 0, t3: 0, t4: 0, t5: 0, t6: 0, our: 0, out: 0 };
         list.forEach((e) => { const z = zoneOf(e.land); if (z.side === 'their') c['t' + z.z]++; else c[z.side]++; });
-        return [p ? (p.num || null) : null, p ? p.name : 'Team', list.length, c.t1, c.t2, c.t3, c.t4, c.t5, c.t6, c.our, c.out];
+        return [p ? jersey(p.num) : null, p ? p.name : 'Team', list.length, c.t1, c.t2, c.t3, c.t4, c.t5, c.t6, c.our, c.out];
       };
       S.players.forEach((p) => { const list = tracked.filter((e) => e.pid === p.id); if (list.length) rows.push(line(p, list)); });
       rows.push(line(null, tracked));
@@ -1209,9 +1278,13 @@
         const scorer = pushEvent('manual', '_pt', null, side);
         if (scorer) toast('+1 ' + (scorer === 'us' ? S.team : S.opp));
       } else {
-        if (scoreFor(S.set)[side] <= 0) return;
-        const a = S.adj[S.set] || (S.adj[S.set] = { us: 0, them: 0 });
-        a[side]--; save(); render();
+        if (matchLocked() || scoreFor(S.set)[side] <= 0) return;
+        // Taking back a point that was just added undoes it, so the serve and rotation go back too.
+        const last = S.events[S.events.length - 1];
+        if (last && last.set === S.set && last.pid === 'manual' && last.key === '_pt' && last.side === side) { undo(); return; }
+        // Otherwise log a correction, so Undo can put the point back.
+        S.events.push({ id: uid(), set: S.set, pid: 'manual', key: '_minus', side, q: null, ts: Date.now(), ps: S.serving, rot: false });
+        save(); render(); toast('−1 ' + (side === 'us' ? S.team : S.opp));
       }
     },
     hitZone(d) {
@@ -1222,28 +1295,76 @@
         clearWait();
         save(); render();
         toast(w.pn + ': ' + STATS[w.key].label + ' · ' + zoneLabel(l));
+        reveal('.g-main');
       } else if (U.land && U.land.z === l.z) {
         U.land = null;   // tapping the chosen zone again clears it
         updateHitCard();
       } else {
         U.land = l;
         updateHitCard();
+        reveal('.g-main');
       }
       if (navigator.vibrate) { try { navigator.vibrate(8); } catch (err) { /* ignore */ } }
     },
     hitSkip() { clearWait(); updateHitCard(); },
+    colInfo(d) { toast(d.t); },
     hitClear() { U.land = null; updateHitCard(); },
     statView(d) { U.statView = d.v === 'hits' ? 'hits' : 'table'; render(); },
     hitMode(d) { U.hitMode = d.m === 'zones' ? 'zones' : 'dots'; render(); },
     toggleServe() { S.serving = S.serving === 'us' ? 'them' : 'us'; save(); render(); },
     undoSetPoint() { closeModal(false); undo(); },
-    bestOf(d) { S.bestOf = Number(d.n) === 3 ? 3 : 5; save(); render(); },
+    bestOf(d) {
+      const n = Number(d.n) === 3 ? 3 : 5;
+      if (n === S.bestOf) return;
+      const prev = S.bestOf;
+      S.bestOf = n;
+      const w = setsWon(), need = setsToWin();
+      const lead = w.us >= need ? 'us' : w.them >= need ? 'them' : null;
+      if (!S.matchOver && lead) {
+        // A team already has enough sets: the match ended with the last finished set.
+        if (S.events.some((e) => e.set === S.set && e.key !== '_set')) {
+          S.bestOf = prev; render();
+          toast('Set ' + S.set + ' already has plays. Undo them first, or start a new match.');
+          return;
+        }
+        const last = S.events.slice().reverse().find((e) => e.endSet && e.set === S.set - 1);
+        S.subs = S.subs.filter((x) => x.set < S.set);
+        S.set--; S.matchOver = lead;
+        if (last && last.lineup) S.rotation = last.lineup.slice();
+        toast((lead === 'us' ? S.team : S.opp) + ' win the match ' + Math.max(w.us, w.them) + '–' + Math.min(w.us, w.them));
+      } else if (S.matchOver && setsWon()[S.matchOver] < need) {
+        // A longer match: the finished match picks up again with the next set.
+        S.matchOver = null;
+        const first = firstServer(S.set);
+        const lastEv = S.events.slice().reverse().find((e) => e.endSet && e.set === S.set);
+        if (lastEv) lastEv.lineup = S.rotation.slice();
+        S.set++; clearForNewSet();
+        if (first) S.serving = first === 'us' ? 'them' : 'us';
+        toast('Best of ' + n + ': set ' + S.set + ' is up');
+      }
+      save(); render();
+    },
     endSet() {
       if (matchLocked()) return;
       const sc = scoreFor(S.set);
-      ask('Start set ' + (S.set + 1) + '?', 'Set ' + S.set + ' is saved as ' + sc.us + '–' + sc.them + '. The scoreboard resets for the new set.', 'Start next set').then((ok) => {
+      const side = sc.us > sc.them ? 'us' : sc.them > sc.us ? 'them' : null;
+      const w = setsWon();
+      const final = side && w[side] + 1 >= setsToWin();
+      const name = side === 'us' ? S.team : S.opp;
+      ask(final ? 'End the match?' : 'Start set ' + (S.set + 1) + '?',
+        'Set ' + S.set + ' is saved as ' + sc.us + '–' + sc.them + '. ' +
+          (final ? 'That is set ' + (w[side] + 1) + ' for ' + name + ', which wins the match.' : 'The scoreboard resets for the new set.') + ' Undo takes it back.',
+        final ? 'End match' : 'Start next set').then((ok) => {
         if (!ok) return;
-        S.set++; clearForNewSet(); save(); render(); toast('Set ' + S.set + ' · court cleared, pick the lineup');
+        // Logged as an event so Undo can reopen the set.
+        const ev = { id: uid(), set: S.set, pid: 'manual', key: '_set', q: null, ts: Date.now(), ps: S.serving, rot: false };
+        S.events.push(ev);
+        U.land = null; clearWait(); U.armKey = null;
+        if (side) endSet(ev, side);
+        else { ev.endSet = 'none'; ev.lineup = S.rotation.slice(); S.set++; clearForNewSet(); }
+        save(); render();
+        if (S.matchOver) setOverModal(ev);
+        else toast('Set ' + S.set + ' · court cleared, pick the lineup');
       });
     },
     backdrop(d, e, el) { if (e.target === el) closeModal(true); },
@@ -1410,7 +1531,7 @@
         if (!data || !Array.isArray(data.players) || !Array.isArray(data.events)) throw new Error('bad');
         ask('Restore this backup?', 'It replaces the roster and plays currently on this device.', 'Restore', true).then((ok) => {
           if (!ok) return;
-          S = Object.assign(fresh(), data); save(); render(); toast('Backup restored');
+          S = normalize(data); U.statSet = 'all'; U.land = null; U.armKey = null; clearWait(); save(); render(); toast('Backup restored');
         });
       } catch (err) { toast('That file is not a Dimed backup'); }
     };

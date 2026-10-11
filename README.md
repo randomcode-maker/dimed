@@ -49,6 +49,8 @@ Use More, then Save backup, to move data between devices.
   best of 3 or 5 under More, or turn automatic set endings off and use Next set yourself.
 - The match ends when a team wins enough sets; the scoreboard shows FINAL and stops logging.
 - Undo works across a set or match ending: it takes back the winning point and reopens that set.
+  Next set can be undone the same way. The − button takes back a point that was just added
+  (with its serve and rotation); on an older point it logs a correction that Undo can reverse.
 - Subs: on the Game screen, tap In on a bench player and pick the zone they take, or Out on a court
   player and pick who replaces them. Stats stay with each player; the bench shows the subs this set.
 - Every set starts with an empty court. Fill it from the bench with In, on the Court tab, or with
@@ -60,10 +62,12 @@ The Game screen has a "Where did it land?" court (our side on the left, theirs o
 
 - Tap the court where the ball lands, then log the play. The spot attaches to the next hit-type play
   (kill, attack, attack error, serve, ace, serve error, block kill, transition hit or kill).
-- Or log the play first, then tap the court within 20 seconds to add the spot to that play.
+- Or log the play first, then tap the court before the next play to add the spot to that play.
+  On a phone the screen scrolls to the court for you, then back to the action buttons.
 - Taps outside the lines count as out. Zones 1–6 are numbered from each team's own side.
 - Dots are green for points, red for errors, and blue for in play.
-- Digs, sets, passes, and other actions never take a spot. A pending spot waits for the next hit.
+- Digs, sets, passes, and other actions never take a spot. A pending spot waits for the next hit in
+  the same rally, and is dropped when the rally ends.
 - Their player's hits are never stored, so a pending spot is dropped on their play.
 - Stats, then Hit map, shows every landing with filters for set, player, and result. Dots shows each
   spot, and Zones shows counts and percentages per zone.
